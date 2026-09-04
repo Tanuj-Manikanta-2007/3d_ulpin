@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D ULPIN — 3D Cadastral & Land Information System</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="navbar">
+    <div class="brand-container">
+      <div class="brand-icon">
+        <i class="fa-solid fa-cube"></i>
+      </div>
+      <div>
+        <div class="brand-title">3D ULPIN HYDERABAD</div>
+        <div class="brand-subtitle">Cadastral Digital Twin & Volumetric Land Registry</div>
+      </div>
+    </div>
+
+    <div class="nav-controls">
+      <!-- Ward Selector -->
+      <div class="ward-selector-group">
+        <label for="ward-select"><i class="fa-solid fa-map-location-dot"></i> Ward:</label>
+        <select id="ward-select" class="styled-select">
+          <option value="1">Loading wards...</option>
+        </select>
+      </div>
+
+      <!-- Data Source Selector -->
+      <div class="ward-selector-group">
+        <label for="source-select"><i class="fa-solid fa-satellite"></i> Mode:</label>
+        <select id="source-select" class="styled-select">
+          <option value="osm">OpenStreetMap (Live)</option>
+          <option value="synthetic">Synthetic Cadastre</option>
+        </select>
+      </div>
+
+      <!-- Search Input -->
+      <div class="search-box">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" id="search-input" class="search-input" placeholder="Search ULPIN, Owner, Survey...">
+      </div>
+
+      <!-- Action Buttons -->
+      <button id="btn-generate-parcels" class="btn btn-primary">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate 3D Parcels
+      </button>
+      <button id="btn-open-ulpin-tool" class="btn btn-secondary">
+        <i class="fa-solid fa-calculator"></i> ULPIN Tool
+      </button>
+    </div>
+  </header>
+
+  <!-- KPI Stats Bar -->
+  <div class="stats-bar">
+    <div class="stats-group">
+      <div class="stat-item">
+        <span class="stat-label">Active Wards:</span>
+        <span id="stat-wards-count" class="stat-value highlight-cyan">--</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Total Parcels:</span>
+        <span id="stat-parcels-count" class="stat-value">--</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">3D Floor Units:</span>
+        <span id="stat-units-count" class="stat-value highlight-emerald">--</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Total Area:</span>
+        <span id="stat-area-count" class="stat-value highlight-purple">--</span>
+      </div>
+    </div>
+
+    <div class="stats-group">
+      <span class="stat-label"><i class="fa-solid fa-shield-halved" style="color: #00f2fe;"></i> DoLR/NIC Standard Coordinate Encodings</span>
+      <span class="stat-label" style="font-family: var(--font-mono); color: #64748b;">EPSG:4326 | EPSG:32644</span>
+    </div>
+  </div>
+
+  <!-- Main Work Area (Dual Viewports + Inspector) -->
+  <main class="app-container">
+    <div class="viewports-container">
+      
+      <!-- 2D Cadastral Map Viewport -->
+      <div class="viewport-panel">
+        <div class="viewport-header">
+          <div class="viewport-badge">
+            <span class="badge-dot"></span> 2D Cadastral Boundary View
+          </div>
+        </div>
+        <div id="map2d" class="map-container"></div>
+      </div>
+
+      <!-- 3D Volumetric Digital Twin Viewport -->
+      <div class="viewport-panel">
+        <div class="viewport-header">
+          <div class="viewport-badge" style="border-color: #8b5cf6;">
+            <span class="badge-dot" style="background: #8b5cf6; box-shadow: 0 0 8px #8b5cf6;"></span> 3D Digital Twin & LiDAR
+          </div>
+        </div>
+
+        <div class="viewport-tools">
+          <button id="btn-mode-mesh" class="btn btn-primary" style="padding: 6px 12px; font-size: 11px;">
+            <i class="fa-solid fa-cubes"></i> 3D Mesh
+          </button>
+          <button id="btn-mode-lidar" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
+            <i class="fa-solid fa-braille"></i> LiDAR Cloud
+          </button>
+          <button id="btn-reset-cam" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px;" title="Reset Camera">
+            <i class="fa-solid fa-crosshairs"></i>
+          </button>
+        </div>
+
+        <canvas id="view3d-canvas"></canvas>
+
+        <div class="view3d-hud">
+          <div class="hud-item"><i class="fa-solid fa-arrows-up-down-left-right" style="color: #00f2fe;"></i> Rotate / Orbit</div>
+          <div class="hud-item"><i class="fa-solid fa-magnifying-glass-plus" style="color: #10b981;"></i> Scroll to Zoom</div>
+          <div class="hud-item"><i class="fa-solid fa-hand-pointer" style="color: #f59e0b;"></i> Click floor to slice</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Right Side Inspector Panel -->
+    <aside class="inspector-panel">
+      <div class="inspector-header">
+        <div class="inspector-title">
+          <i class="fa-solid fa-fingerprint" style="color: #00f2fe;"></i> Parcel & 3D Unit Dossier
+        </div>
+        <span id="inspector-parcel-id" style="font-size: 12px; font-family: var(--font-mono); color: #94a3b8;">HYD-W1-P001</span>
+      </div>
+
+      <div class="inspector-body">
+        
+        <!-- Dual 2D & 3D ULPIN Badges -->
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+          <div class="ulpin-badge" style="background: linear-gradient(135deg, rgba(0, 242, 254, 0.12), rgba(15, 23, 42, 0.8)); border-color: rgba(0, 242, 254, 0.4);">
+            <div id="inspector-2d-ulpin" class="ulpin-code" style="color: #00f2fe;">832454DYJFAQY2</div>
+            <div class="ulpin-desc" style="color: #94a3b8;">2D Cadastral Base ULPIN (14 Chars)</div>
+          </div>
+          
+          <div class="ulpin-badge" style="background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(15, 23, 42, 0.8)); border-color: rgba(168, 85, 247, 0.4);">
+            <div id="inspector-3d-ulpin" class="ulpin-code" style="color: #a855f7;">832454DYJFAQY2-F00</div>
+            <div id="inspector-3d-ulpin-desc" class="ulpin-desc" style="color: #cbd5e1;">3D Volumetric ULPIN (18 Chars = 14 Base + 4 Level)</div>
+          </div>
+        </div>
+
+
+        <!-- Cadastral Attributes -->
+        <div class="card">
+          <div class="card-title">
+            <span>Cadastral Record</span>
+            <span id="inspector-source-badge" style="font-size: 10px; color: #00f2fe; text-transform: none;">OSM Live</span>
+          </div>
+          <div class="props-grid">
+            <div class="prop-box">
+              <div class="prop-name">Owner / Entity</div>
+              <div id="inspector-owner" class="prop-val">Venkat Reddy</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Survey Number</div>
+              <div id="inspector-survey" class="prop-val">Sy. 142/3</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Land Use</div>
+              <div id="inspector-landuse" class="prop-val">Residential</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Parcel Area</div>
+              <div id="inspector-area" class="prop-val">1,450 m²</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3D Volumetric & Elevation Profile -->
+        <div class="card">
+          <div class="card-title">3D Elevation & Volumetrics</div>
+          <div class="props-grid">
+            <div class="prop-box">
+              <div class="prop-name">Ground DEM (Z_base)</div>
+              <div id="inspector-base-elev" class="prop-val">512.4 m MSL</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Max Height (DSM)</div>
+              <div id="inspector-max-height" class="prop-val">19.2 m</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Floor Space Index</div>
+              <div id="inspector-far" class="prop-val">2.4 FAR</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">3D Floor Units</div>
+              <div id="inspector-units-count" class="prop-val">6 Units</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Multi-Story 3D Units List -->
+        <div class="card">
+          <div class="card-title">
+            <span>3D Floor Slices & Units</span>
+            <span style="font-size: 10px; color: #00f2fe; text-transform: none;">Click to isolate</span>
+          </div>
+          <div id="inspector-floor-list" class="floor-list">
+            <!-- Populated dynamically by JS -->
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </main>
+
+  <!-- Modal: Interactive 3D ULPIN Calculator & Decoder -->
+  <div id="ulpin-modal" class="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-calculator" style="color: #00f2fe;"></i> DoLR/NIC 3D ULPIN Engine</h3>
+        <button id="btn-close-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Input Form -->
+        <div class="form-row">
+          <div class="form-group">
+            <label for="input-lat">Latitude (WGS84)</label>
+            <input type="number" id="input-lat" class="form-input" value="17.440082" step="0.000001">
+          </div>
+          <div class="form-group">
+            <label for="input-lon">Longitude (WGS84)</label>
+            <input type="number" id="input-lon" class="form-input" value="78.348914" step="0.000001">
+          </div>
+          <div class="form-group">
+            <label for="input-floor">Floor Index (0=Ground)</label>
+            <input type="number" id="input-floor" class="form-input" value="0" min="-10" max="150">
+          </div>
+        </div>
+
+        <button id="btn-calculate-ulpin" class="btn btn-primary" style="width: 100%; justify-content: center;">
+          <i class="fa-solid fa-bolt"></i> Compute 14-Character 3D ULPIN
+        </button>
+
+        <!-- Computational Steps Output -->
+        <div id="ulpin-breakdown-result"></div>
+
+        <hr style="border: 0; border-top: 1px solid var(--border-glass); margin: 10px 0;">
+
+        <!-- Reverse Decoder Section -->
+        <div class="form-group">
+          <label for="input-ulpin-code">Reverse Decode Existing ULPIN</label>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" id="input-ulpin-code" class="form-input" style="flex: 1;" placeholder="Enter 14-character ULPIN..." maxlength="14">
+            <button id="btn-decode-ulpin" class="btn btn-secondary">Decode</button>
+          </div>
+        </div>
+        <div id="ulpin-decode-result"></div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Core JS Libraries -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <!-- Application Modules -->
+  <script src="/static/js/map2d.js"></script>
+  <script src="/static/js/viewer3d.js"></script>
+  <script src="/static/js/ulpin_tools.js"></script>
+  <script src="/static/js/app.js"></script>
+
+</body>
+</html>
