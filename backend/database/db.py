@@ -164,7 +164,16 @@ class SpatialDatabase:
             results = list(self.parcels.values())
             
             if ward_id:
-                results = [p for p in results if p["ward_id"] == str(ward_id)]
+                ward_str = str(ward_id)
+                results = [p for p in results if p["ward_id"] == ward_str]
+                if len(results) == 0 and ward_str in self.wards:
+                    # Auto-generate parcels for any selected ward on-the-fly
+                    try:
+                        results = self.generate_ward_parcels(ward_str, target_parcels=16, source="osm")
+                    except Exception as e:
+                        print(f"[Database] Auto-generation error for ward {ward_str}: {e}")
+                        results = []
+
                 
             if land_use and land_use.lower() != "all":
                 results = [p for p in results if p["land_use"].lower() == land_use.lower()]
