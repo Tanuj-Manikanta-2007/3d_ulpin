@@ -26,7 +26,7 @@ from backend.services.spatial_service import (
 )
 from backend.services.ulpin_generator import generate_prototype_ulpin
 from backend.services.extrusion_engine import extrude_parcel_and_buildings
-from backend.services.osm_service import fetch_osm_buildings_in_bbox
+from backend.services.osm_service import fetch_osm_buildings_in_bbox, get_osm_building_count_in_bbox
 
 
 LAND_USES = ["Residential", "Commercial", "Mixed Use", "Institutional"]
@@ -56,57 +56,77 @@ def generate_parcels_from_osm(
     max_parcels: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
-    Fetch real building footprints from OSM and create cadastral parcels wrapping them.
+    Fetch real building footprints from OSM across the entire ward boundary.
     All geometries are standard WGS84 (lon, lat).
+    Generates all building parcels in the ward, tagging 50 representative parcels
+    to store into PostgreSQL.
     """
     min_lon, min_lat, max_lon, max_lat = ward_polygon_wgs84.bounds
     
-    # Take a representative bounding box centered inside the ward for fast Overpass query
-    center_lon = (min_lon + max_lon) / 2.0
-    center_lat = (min_lat + max_lat) / 2.0
-    sub_span = 0.012  # approx 1.3 km for sub-second Overpass response
+    # 1. Total real building count across the entire ward bounding box
+    total_osm_count = get_osm_building_count_in_bbox(min_lon, min_lat, max_lon, max_lat)
     
-    q_min_lon = max(min_lon, center_lon - sub_span)
-    q_max_lon = min(max_lon, center_lon + sub_span)
-    q_min_lat = max(min_lat, center_lat - sub_span)
-    q_max_lat = min(max_lat, center_lat + sub_span)
-
+    # 2. Fetch real building footprints across the full bounding box
     osm_buildings = fetch_osm_buildings_in_bbox(
-        min_lon=q_min_lon,
-        min_lat=q_min_lat,
-        max_lon=q_max_lon,
-        max_lat=q_max_lat
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        max_buildings=max_parcels
     )
 
     if not osm_buildings:
-        print("[Dataset Generator] No OSM buildings found in query box, falling back to synthetic generator.")
+        print("[Dataset Generator] No OSM buildings found in ward bounds, falling back to synthetic generator.")
         return partition_ward_into_parcels(
             ward_polygon_wgs84,
             ward_id,
-            target_parcels=max_parcels or 18
+            target_parcels=max_parcels or 1500
         )
+
+    # 3. Filter buildings that strictly intersect the ward polygon boundary
+    valid_buildings = []
+    for b_item in osm_buildings:
+        b_poly = b_item["geometry"]
+        if ward_polygon_wgs84.intersects(b_poly):
+            valid_buildings.append(b_item)
+
+    if not valid_buildings:
+        print("[Dataset Generator] 0 OSM buildings fell strictly inside ward polygon, falling back to synthetic generator.")
+        return partition_ward_into_parcels(
+            ward_polygon_wgs84,
+            ward_id,
+            target_parcels=max_parcels or 1500
+        )
+
+    # Total detected building count across the ward
+    total_detected = max(len(valid_buildings), total_osm_count)
+    print(f"[Dataset Generator] Detected {total_detected} buildings in Ward {ward_id} (OSM). Generating all {len(valid_buildings)} parcels, with 50 selected for DB persistence.")
+
+    # 4. Generate parcels for ALL valid buildings in the ward, tagging 50 for database persistence
+    target_db_count = min(50, len(valid_buildings))
+    if len(valid_buildings) > target_db_count:
+        step = len(valid_buildings) / float(target_db_count)
+        persisted_indices = set(int(i * step) for i in range(target_db_count))
+    else:
+        persisted_indices = set(range(len(valid_buildings)))
 
     parcels_data = []
     parcel_count = 0
 
-    for b_item in osm_buildings:
+    for idx, b_item in enumerate(valid_buildings):
         b_poly = b_item["geometry"]
-        
-        # Verify building intersects ward polygon
-        if not ward_polygon_wgs84.intersects(b_poly):
-            continue
-
         parcel_count += 1
+        is_persisted = (idx in persisted_indices)
         
-        # Create parcel boundary by buffering building footprint in metric UTM (5m - 9m buffer)
-        b_utm = to_utm(b_poly)
-        buffer_dist = random.uniform(5.0, 9.0)
-        parcel_utm = b_utm.buffer(buffer_dist)
-        parcel_wgs84 = to_wgs84(parcel_utm)
-        parcel_wgs84 = validate_and_fix_polygon(parcel_wgs84)
-
-        centroid_lat, centroid_lon = get_centroid_wgs84(parcel_wgs84)
-        area_sqm = calculate_metric_area(parcel_wgs84)
+        # Fast parcel boundary in WGS84 (0.00005 to 0.000085 deg ≈ 5.5m to 9.5m buffer)
+        buffer_deg = random.uniform(0.00005, 0.000085)
+        parcel_wgs84 = b_poly.buffer(buffer_deg)
+        
+        centroid = parcel_wgs84.centroid
+        centroid_lat, centroid_lon = float(centroid.y), float(centroid.x)
+        
+        b_area = b_item.get("area_sqm") or 120.0
+        area_sqm = round(b_area * 1.6, 2)
 
         # 2D Base ULPIN
         parcel_ulpin = generate_prototype_ulpin(centroid_lat, centroid_lon, floor=0)
@@ -114,23 +134,35 @@ def generate_parcels_from_osm(
         land_use = b_item.get("land_use", "Residential")
         owner = generate_random_owner(land_use)
         survey_no = f"Sy. {random.randint(12, 380)}/{random.randint(1, 8)}"
-        parcel_id = f"HYD-W{ward_id}-OSM{parcel_count:03d}"
+        w_prefix = str(ward_id) if "-" in str(ward_id) else f"HYD-W{ward_id}"
+        parcel_id = f"{w_prefix}-OSM{parcel_count:03d}"
 
-        buildings_wgs84 = [{
-            "geometry": b_poly,
+        # Eagerly compute full 3D extrusion for the 50 DB parcels
+        if is_persisted:
+            parcel_wgs84_fixed = validate_and_fix_polygon(parcel_wgs84)
+            extrusion_data = extrude_parcel_and_buildings(
+                parcel_wgs84=parcel_wgs84_fixed,
+                buildings_wgs84=[{
+                    "geometry": b_poly,
+                    "floors": b_item.get("floors", 3),
+                    "floor_height": 3.2,
+                    "name": b_item.get("name", f"Building {parcel_count}")
+                }],
+                parcel_ulpin=parcel_ulpin,
+                parcel_id=parcel_id,
+                land_use=land_use,
+                owner_name=owner
+            )
+        else:
+            extrusion_data = None
+
+        # Store JSON-serializable buildings_wgs84 (GeoJSON geometry)
+        buildings_geojson = [{
+            "geometry": shapely_to_geojson(b_poly),
             "floors": b_item.get("floors", 3),
             "floor_height": 3.2,
             "name": b_item.get("name", f"Building {parcel_count}")
         }]
-
-        extrusion_data = extrude_parcel_and_buildings(
-            parcel_wgs84=parcel_wgs84,
-            buildings_wgs84=buildings_wgs84,
-            parcel_ulpin=parcel_ulpin,
-            parcel_id=parcel_id,
-            land_use=land_use,
-            owner_name=owner
-        )
 
         parcels_data.append({
             "parcel_id": parcel_id,
@@ -139,25 +171,17 @@ def generate_parcels_from_osm(
             "survey_number": survey_no,
             "land_use": land_use,
             "owner_name": owner,
-            "area_sqm": round(area_sqm, 2),
+            "area_sqm": area_sqm,
             "centroid": {"lat": centroid_lat, "lon": centroid_lon},
             "geometry": shapely_to_geojson(parcel_wgs84),
-            "buildings_count": len(buildings_wgs84),
+            "buildings_count": 1,
             "floors_count": b_item.get("floors", 3),
             "data_source": "OpenStreetMap Live",
+            "total_detected_in_ward": total_detected,
+            "is_persisted_to_db": is_persisted,
+            "buildings_wgs84": buildings_geojson,
             "extrusion": extrusion_data
         })
-
-        if max_parcels is not None and len(parcels_data) >= max_parcels:
-            break
-
-    if len(parcels_data) == 0:
-        print("[Dataset Generator] 0 OSM buildings fell inside ward geometry, falling back to synthetic generator.")
-        return partition_ward_into_parcels(
-            ward_polygon_wgs84,
-            ward_id,
-            target_parcels=max_parcels or 18
-        )
 
     return parcels_data
 
@@ -165,10 +189,11 @@ def generate_parcels_from_osm(
 def partition_ward_into_parcels(
     ward_polygon_wgs84: Polygon,
     ward_id: Union[int, str],
-    target_parcels: int = 18
+    target_parcels: int = 1200
 ) -> List[Dict[str, Any]]:
     """
     Subdivide a study ward into discrete cadastral parcels using Voronoi spatial tessellation in UTM projection.
+    Generates a dense network of parcels across the ward, tagging 50 for database persistence.
     """
     ward_utm = to_utm(ward_polygon_wgs84)
     minx, miny, maxx, maxy = ward_utm.bounds
@@ -187,7 +212,7 @@ def partition_ward_into_parcels(
     if len(seed_points) < 4:
         seed_points = [
             Point(minx + (maxx - minx) * fx, miny + (maxy - miny) * fy)
-            for fx in [0.3, 0.5, 0.7] for fy in [0.3, 0.5, 0.7]
+            for fx in [0.2, 0.4, 0.6, 0.8] for fy in [0.2, 0.4, 0.6, 0.8]
         ]
 
     multi_pt = MultiPoint(seed_points)
@@ -204,7 +229,7 @@ def partition_ward_into_parcels(
         if isinstance(clipped, MultiPolygon):
             clipped = max(clipped.geoms, key=lambda g: g.area)
             
-        if clipped.area < 200.0:
+        if clipped.area < 150.0:
             continue
 
         parcel_count += 1
@@ -219,7 +244,8 @@ def partition_ward_into_parcels(
         land_use = random.choices(LAND_USES, weights=[0.55, 0.25, 0.15, 0.05])[0]
         owner = generate_random_owner(land_use)
         survey_no = f"Sy. {random.randint(12, 380)}/{random.randint(1, 8)}"
-        parcel_id = f"HYD-W{ward_id}-P{parcel_count:03d}"
+        w_prefix = str(ward_id) if "-" in str(ward_id) else f"HYD-W{ward_id}"
+        parcel_id = f"{w_prefix}-P{parcel_count:03d}"
         
         # Setback buffer in UTM (3m - 5.5m)
         setback_dist = random.uniform(3.0, 5.5)
@@ -259,6 +285,17 @@ def partition_ward_into_parcels(
             owner_name=owner
         )
         
+        buildings_geojson = []
+        for b in buildings_wgs84:
+            bg = b.get("geometry")
+            bg_json = shapely_to_geojson(bg) if hasattr(bg, "__geo_interface__") else bg
+            buildings_geojson.append({
+                "geometry": bg_json,
+                "floors": b.get("floors", 1),
+                "floor_height": b.get("floor_height", 3.2),
+                "name": b.get("name", f"Structure-{parcel_count}")
+            })
+
         parcels_data.append({
             "parcel_id": parcel_id,
             "ward_id": str(ward_id),
@@ -272,7 +309,20 @@ def partition_ward_into_parcels(
             "buildings_count": len(buildings_wgs84),
             "floors_count": sum(b.get("floors", 1) for b in buildings_wgs84),
             "data_source": "Synthetic Partitioning",
+            "buildings_wgs84": buildings_geojson,
             "extrusion": extrusion_data
         })
+
+    # Tag 50 evenly sampled parcels for DB persistence
+    target_db_count = min(50, len(parcels_data))
+    if len(parcels_data) > target_db_count:
+        step = len(parcels_data) / float(target_db_count)
+        persisted_indices = set(int(i * step) for i in range(target_db_count))
+    else:
+        persisted_indices = set(range(len(parcels_data)))
+
+    for idx, p in enumerate(parcels_data):
+        p["is_persisted_to_db"] = (idx in persisted_indices)
+        p["total_detected_in_ward"] = len(parcels_data)
         
     return parcels_data

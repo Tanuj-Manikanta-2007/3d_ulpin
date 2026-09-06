@@ -103,8 +103,10 @@ def test_spatial_transforms():
 def test_database_and_wards():
     print("Testing Database and Hyderabad Ward Loader...")
     wards = db_instance.get_all_wards()
-    assert len(wards) == 145, f"Expected 145 wards, found {len(wards)}"
-    print(f"  [PASS] Loaded {len(wards)} wards.")
+    assert len(wards) >= 145, f"Expected at least 145 wards, found {len(wards)}"
+    hyd_wards = db_instance.get_all_wards(city_id="TS-HYD")
+    assert len(hyd_wards) == 145, f"Expected 145 Hyderabad wards, found {len(hyd_wards)}"
+    print(f"  [PASS] Loaded {len(wards)} total wards ({len(hyd_wards)} in Hyderabad GHMC).")
 
     # Check seeded parcels
     parcels = db_instance.get_parcels()

@@ -56,7 +56,14 @@ class Viewer3DController {
     this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
-    this.controls.maxPolarAngle = Math.PI / 2 - 0.05; // don't go below ground
+    this.controls.minPolarAngle = 0.01; // Free 360 vertical rotation from zenith
+    this.controls.maxPolarAngle = Math.PI - 0.01; // to nadir without gimbal lock
+    this.controls.minAzimuthAngle = -Infinity; // Infinite 360 horizontal rotation
+    this.controls.maxAzimuthAngle = Infinity;
+    this.controls.enableRotate = true;
+    this.controls.rotateSpeed = 1.0;
+    this.controls.autoRotate = false;
+    this.controls.autoRotateSpeed = 2.0;
     this.controls.target.set(0, 5, 0);
 
     this.setupLighting();
@@ -168,18 +175,17 @@ class Viewer3DController {
         geometry.setIndex(indices);
         geometry.computeVertexNormals();
 
-        // Floor Unit Material (Glassmorphic glow)
+        // Floor Unit Material (Vibrant glassmorphic glow with emissive tint)
         const isGround = fIdx === 0;
         const matColor = isGround ? 0x00f2fe : (fIdx % 2 === 0 ? 0x38bdf8 : 0x818cf8);
         
-        const material = new THREE.MeshPhysicalMaterial({
+        const material = new THREE.MeshStandardMaterial({
           color: matColor,
+          emissive: isGround ? 0x002233 : 0x081020,
           transparent: true,
-          opacity: 0.75,
-          roughness: 0.2,
-          metalness: 0.1,
-          transmission: 0.4,
-          ior: 1.4,
+          opacity: 0.85,
+          roughness: 0.3,
+          metalness: 0.2,
           side: THREE.DoubleSide
         });
 
@@ -194,9 +200,9 @@ class Viewer3DController {
           originalColor: matColor
         };
 
-        // Wireframe edges
+        // Wireframe edges for crisp architectural lines
         const edges = new THREE.EdgesGeometry(geometry);
-        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1, transparent: true, opacity: 0.4 });
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 1.5, transparent: true, opacity: 0.6 });
         const wireframe = new THREE.LineSegments(edges, lineMat);
         mesh.add(wireframe);
 
@@ -205,6 +211,18 @@ class Viewer3DController {
       });
     });
 
+    // Center buildingGroup directly at (0, 0, 0) so it aligns with ground grid and rotates cleanly 360
+    const box = new THREE.Box3().setFromObject(this.buildingGroup);
+    if (!box.isEmpty()) {
+      const center = box.getCenter(new THREE.Vector3());
+      this.buildingOffset = { x: center.x, z: center.z };
+      this.buildingGroup.position.x = -center.x;
+      this.buildingGroup.position.z = -center.z;
+      this.lidarGroup.position.x = -center.x;
+      this.lidarGroup.position.z = -center.z;
+    }
+
+    this.onWindowResize();
     this.setViewMode(this.viewMode);
     this.focusCamera();
   }
@@ -247,6 +265,10 @@ class Viewer3DController {
     });
 
     const pointCloud = new THREE.Points(geometry, material);
+    if (this.buildingOffset) {
+      this.lidarGroup.position.x = -this.buildingOffset.x;
+      this.lidarGroup.position.z = -this.buildingOffset.z;
+    }
     this.lidarGroup.add(pointCloud);
   }
 
@@ -291,8 +313,8 @@ class Viewer3DController {
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z, 20);
 
-      this.controls.target.copy(center);
-      this.camera.position.set(center.x + maxDim * 1.6, center.y + maxDim * 1.2, center.z + maxDim * 1.6);
+      this.controls.target.set(center.x, center.y, center.z);
+      this.camera.position.set(center.x + maxDim * 1.5, center.y + maxDim * 1.0, center.z + maxDim * 1.5);
       this.controls.update();
     }
   }
@@ -313,6 +335,15 @@ class Viewer3DController {
         this.onFloorSelected(fIdx, hit.userData);
       }
     }
+  }
+
+  toggleAutoRotate() {
+    this.controls.autoRotate = !this.controls.autoRotate;
+    return this.controls.autoRotate;
+  }
+
+  resetCamera() {
+    this.focusCamera();
   }
 
   animate() {

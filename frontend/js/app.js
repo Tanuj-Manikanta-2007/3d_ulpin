@@ -3,14 +3,79 @@
  * Main UI Coordinator and Application State Manager.
  */
 
+// Resilient fetch wrapper that bypasses buggy browser extensions (e.g. 200.js / requests.js)
+// which monkey-patch window.fetch and throw unhandled errors like "Cannot read properties of undefined (reading 'M_ID')".
+const safeFetch = (() => {
+  let cleanFetch = null;
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.documentElement.appendChild(iframe);
+    if (iframe.contentWindow && iframe.contentWindow.fetch) {
+      cleanFetch = iframe.contentWindow.fetch.bind(window);
+    }
+    document.documentElement.removeChild(iframe);
+  } catch (_) {
+    cleanFetch = null;
+  }
+
+  return async function(url, options) {
+    if (cleanFetch) {
+      try {
+        return await cleanFetch(url, options);
+      } catch (_) {
+        // Fall back to window.fetch or XHR
+      }
+    }
+
+    try {
+      return await window.fetch(url, options);
+    } catch (fetchErr) {
+      // Fallback to native XMLHttpRequest if extension monkey-patch corrupted fetch
+      return new Promise((resolve, reject) => {
+        try {
+          const xhr = new XMLHttpRequest();
+          const method = (options && options.method) || 'GET';
+          xhr.open(method, url, true);
+          if (options && options.headers) {
+            for (const [k, v] of Object.entries(options.headers)) {
+              xhr.setRequestHeader(k, v);
+            }
+          }
+          xhr.onload = () => {
+            resolve({
+              ok: xhr.status >= 200 && xhr.status < 300,
+              status: xhr.status,
+              statusText: xhr.statusText,
+              json: async () => JSON.parse(xhr.responseText),
+              text: async () => xhr.responseText
+            });
+          };
+          xhr.onerror = () => reject(new TypeError('Network request failed'));
+          xhr.send((options && options.body) || null);
+        } catch (xhrErr) {
+          reject(xhrErr);
+        }
+      });
+    }
+  };
+})();
+
+window.safeFetch = safeFetch;
+
 class App {
   constructor() {
     this.map2d = null;
     this.viewer3d = null;
     this.ulpinTools = null;
 
+    this.states = [];
+    this.cities = [];
     this.wards = [];
-    this.currentWardId = '1'; // Default: Ward 105 Gachibowli
+
+    this.currentStateCode = 'TS'; // Default: Telangana
+    this.currentCityId = 'TS-HYD'; // Default: Hyderabad (GHMC)
+    this.currentWardId = '1';      // Default: Ward 105 Gachibowli
     this.currentParcel = null;
     this.currentParcelsList = [];
 
@@ -29,12 +94,12 @@ class App {
     // 3. Load Initial Data
     await this.loadConfig();
     await this.loadStats();
-    await this.loadWards();
+    await this.loadHierarchy();
   }
 
   async loadConfig() {
     try {
-      const resp = await fetch('/api/config');
+      const resp = await safeFetch('/api/config');
       if (resp.ok) {
         const config = await resp.json();
         if (config.mapbox_token) {
@@ -47,6 +112,18 @@ class App {
   }
 
   bindUIEvents() {
+    // State dropdown change
+    const stateSelect = document.getElementById('state-select');
+    if (stateSelect) {
+      stateSelect.addEventListener('change', (e) => this.onStateChanged(e.target.value));
+    }
+
+    // City dropdown change
+    const citySelect = document.getElementById('city-select');
+    if (citySelect) {
+      citySelect.addEventListener('change', (e) => this.onCityChanged(e.target.value));
+    }
+
     // Ward dropdown change
     const wardSelect = document.getElementById('ward-select');
     if (wardSelect) {
@@ -103,11 +180,26 @@ class App {
         this.viewer3d.focusCamera();
       });
     }
+
+    // Free 360 Auto-Rotate button
+    const btnAutoRotate = document.getElementById('btn-autorotate-3d');
+    if (btnAutoRotate) {
+      btnAutoRotate.addEventListener('click', () => {
+        const isRotating = this.viewer3d.toggleAutoRotate();
+        if (isRotating) {
+          btnAutoRotate.classList.add('btn-primary');
+          btnAutoRotate.classList.remove('btn-secondary');
+        } else {
+          btnAutoRotate.classList.add('btn-secondary');
+          btnAutoRotate.classList.remove('btn-primary');
+        }
+      });
+    }
   }
 
   async loadStats() {
     try {
-      const resp = await fetch('/api/stats');
+      const resp = await safeFetch('/api/stats');
       if (!resp.ok) return;
       const stats = await resp.json();
 
@@ -120,45 +212,136 @@ class App {
     }
   }
 
-  async loadWards() {
+  async loadHierarchy() {
     try {
-      const resp = await fetch('/api/wards');
+      const resp = await safeFetch('/api/states');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      this.states = data.states || [];
+
+      const stateSelect = document.getElementById('state-select');
+      if (stateSelect) {
+        stateSelect.innerHTML = '';
+        this.states.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.state_code;
+          opt.textContent = `${s.state_name} (${s.cities_count} cities)`;
+          if (s.state_code === this.currentStateCode) {
+            opt.selected = true;
+          }
+          stateSelect.appendChild(opt);
+        });
+      }
+
+      await this.loadCities(this.currentStateCode);
+    } catch (e) {
+      console.error('Error loading states:', e);
+    }
+  }
+
+  async loadCities(stateCode) {
+    try {
+      const resp = await safeFetch(`/api/states/${stateCode}/cities`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      this.cities = data.cities || [];
+
+      const citySelect = document.getElementById('city-select');
+      if (citySelect) {
+        citySelect.innerHTML = '';
+        this.cities.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.city_id;
+          opt.textContent = `${c.city_name} (${c.wards_count} wards)`;
+          if (c.city_id === this.currentCityId) {
+            opt.selected = true;
+          }
+          citySelect.appendChild(opt);
+        });
+
+        // Ensure currentCityId is valid for selected state
+        if (!this.cities.some(c => c.city_id === this.currentCityId) && this.cities.length > 0) {
+          this.currentCityId = this.cities[0].city_id;
+          citySelect.value = this.currentCityId;
+        }
+      }
+
+      await this.loadWards(this.currentCityId);
+    } catch (e) {
+      console.error('Error loading cities:', e);
+    }
+  }
+
+  async loadWards(cityId, reloadData = true) {
+    try {
+      const resp = await safeFetch(`/api/cities/${cityId}/wards`);
       if (!resp.ok) return;
       const data = await resp.json();
       this.wards = data.wards || [];
 
-      const select = document.getElementById('ward-select');
-      select.innerHTML = '';
+      const wardSelect = document.getElementById('ward-select');
+      if (wardSelect) {
+        wardSelect.innerHTML = '';
+        this.wards.forEach(w => {
+          const opt = document.createElement('option');
+          opt.value = w.id;
+          opt.textContent = `${w.name} ${w.parcels_count > 0 ? `(${w.parcels_count} parcels)` : ''}`;
+          if (String(w.id) === String(this.currentWardId)) {
+            opt.selected = true;
+          }
+          wardSelect.appendChild(opt);
+        });
 
-      this.wards.forEach(w => {
-        const opt = document.createElement('option');
-        opt.value = w.id;
-        opt.textContent = `${w.name} ${w.parcels_count > 0 ? `(${w.parcels_count} parcels)` : ''}`;
-        if (w.id === this.currentWardId) {
-          opt.selected = true;
+        // Ensure currentWardId is valid for selected city
+        if (!this.wards.some(w => String(w.id) === String(this.currentWardId)) && this.wards.length > 0) {
+          this.currentWardId = this.wards[0].id;
+          wardSelect.value = this.currentWardId;
         }
-        select.appendChild(opt);
-      });
+      }
 
-      // Load initial ward
-      this.loadWardData(this.currentWardId);
+      if (reloadData && this.currentWardId) {
+        await this.loadWardData(this.currentWardId);
+      }
     } catch (e) {
       console.error('Error loading wards:', e);
     }
   }
 
+  async onStateChanged(stateCode) {
+    this.currentStateCode = stateCode;
+    const st = this.states.find(s => s.state_code === stateCode);
+    if (st && st.center && this.map2d.map) {
+      this.map2d.map.flyTo(st.center, 8, { duration: 1.2 });
+    }
+    await this.loadCities(stateCode);
+  }
+
+  async onCityChanged(cityId) {
+    this.currentCityId = cityId;
+    const ct = this.cities.find(c => c.city_id === cityId);
+    if (ct && ct.center && this.map2d.map) {
+      this.map2d.map.flyTo(ct.center, 12, { duration: 1.2 });
+    }
+    await this.loadWards(cityId);
+  }
+
   async loadWardData(wardId) {
     try {
+      this.renderEmptyInspector('<i class="fas fa-spinner fa-spin" style="color: #00f2fe; margin-right: 6px;"></i> Loading 3D Parcels from Database...');
+
       // 1. Fetch Ward Geometry
-      const wardResp = await fetch(`/api/wards/${wardId}`);
+      const wardResp = await safeFetch(`/api/wards/${wardId}`);
       if (!wardResp.ok) {
         throw new Error(`Ward request failed (${wardResp.status})`);
       }
       const wardData = await wardResp.json();
       this.map2d.setWard(wardData);
 
-      // 2. Fetch Parcels in Ward
-      const parcelsResp = await fetch(`/api/parcels?ward_id=${wardId}`);
+      // 2. Fetch Parcels in Ward (DB-First: returned immediately from DB if present, or generated via OSM & saved)
+      const sourceSelect = document.getElementById('source-select');
+      const source = sourceSelect ? sourceSelect.value : 'osm';
+
+      const parcelsResp = await safeFetch(`/api/parcels?ward_id=${wardId}&source=${source}`);
       if (!parcelsResp.ok) {
         throw new Error(`Parcel request failed (${parcelsResp.status})`);
       }
@@ -176,6 +359,8 @@ class App {
       } else {
         this.renderEmptyInspector();
       }
+
+      await this.loadStats();
     } catch (e) {
       console.error('Error loading ward data:', e);
       this.currentParcelsList = [];
@@ -190,11 +375,11 @@ class App {
     const source = sourceSelect ? sourceSelect.value : 'osm';
 
     const origText = btn.innerHTML;
-    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Fetching ${source.toUpperCase()}...`;
+    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Generating All Parcels (${source.toUpperCase()})...`;
     btn.disabled = true;
 
     try {
-      const resp = await fetch(`/api/wards/${this.currentWardId}/generate?count=18&source=${source}`, {
+      const resp = await safeFetch(`/api/wards/${this.currentWardId}/generate?source=${source}`, {
         method: 'POST'
       });
 
@@ -210,11 +395,44 @@ class App {
         return;
       }
 
+      const genData = await resp.json();
+
+      // Render all generated parcels across the ward location directly on 2D map
+      if (genData.parcels && genData.parcels.length > 0) {
+        const features = genData.parcels.map(p => ({
+          type: "Feature",
+          id: p.parcel_id,
+          properties: {
+            parcel_id: p.parcel_id,
+            ward_id: p.ward_id,
+            ulpin: p.ulpin,
+            survey_number: p.survey_number,
+            land_use: p.land_use,
+            owner_name: p.owner_name,
+            area_sqm: p.area_sqm,
+            buildings_count: p.buildings_count,
+            floors_count: p.floors_count,
+            data_source: p.data_source || 'OpenStreetMap Live',
+            is_persisted_to_db: p.is_persisted_to_db,
+            centroid: p.centroid
+          },
+          geometry: p.geometry
+        }));
+
+        this.currentParcelsList = features;
+        this.map2d.setParcels({ type: "FeatureCollection", features: features });
+
+        if (features.length > 0) {
+          const firstId = features[0].properties.parcel_id;
+          this.onParcelSelected(firstId);
+        }
+      }
+
       await this.loadStats();
-      await this.loadWards();
+      await this.loadWards(this.currentCityId, false);
     } catch (e) {
       console.error(e);
-      alert('Failed to trigger parcel generation.');
+      alert('Failed to trigger parcel generation: ' + (e.message || e));
     } finally {
       btn.innerHTML = origText;
       btn.disabled = false;
@@ -228,7 +446,7 @@ class App {
     }
 
     try {
-      const resp = await fetch(`/api/parcels?search=${encodeURIComponent(term)}`);
+      const resp = await safeFetch(`/api/parcels?search=${encodeURIComponent(term)}`);
       if (resp.ok) {
         const data = await resp.json();
         this.map2d.setParcels(data);
@@ -246,27 +464,38 @@ class App {
     this.map2d.selectParcel(parcelId);
 
     try {
-      // 1. Fetch Full Parcel Data
-      const pResp = await fetch(`/api/parcels/${parcelId}`);
-      if (!pResp.ok) return;
-      this.currentParcel = await pResp.json();
-
-      // 2. Fetch 3D Extrusion
-      const extResp = await fetch(`/api/parcels/${parcelId}/3d`);
-      if (extResp.ok) {
-        const extData = await extResp.json();
-        this.viewer3d.setParcel3D(extData);
+      // 1. Fetch full parcel metadata
+      try {
+        const pResp = await safeFetch(`/api/parcels/${parcelId}`);
+        if (pResp && pResp.ok) {
+          this.currentParcel = await pResp.json();
+          this.renderParcelInspector(this.currentParcel);
+        }
+      } catch (pErr) {
+        console.warn('Could not load parcel metadata:', pErr);
       }
 
-      // 3. Fetch LiDAR Points
-      const lidarResp = await fetch(`/api/parcels/${parcelId}/lidar`);
-      if (lidarResp.ok) {
-        const lidarData = await lidarResp.json();
-        this.viewer3d.setLiDARPoints(lidarData);
+      // 2. Fetch 3D extrusion model
+      try {
+        const extResp = await safeFetch(`/api/parcels/${parcelId}/3d`);
+        if (extResp && extResp.ok) {
+          const extData = await extResp.json();
+          this.viewer3d.setParcel3D(extData);
+        }
+      } catch (extErr) {
+        console.warn('Could not load 3D extrusion:', extErr);
       }
 
-      // 4. Update Inspector UI
-      this.renderParcelInspector(this.currentParcel);
+      // 3. Fetch LiDAR point cloud
+      try {
+        const lidarResp = await safeFetch(`/api/parcels/${parcelId}/lidar`);
+        if (lidarResp && lidarResp.ok) {
+          const lidarData = await lidarResp.json();
+          this.viewer3d.setLiDARPoints(lidarData);
+        }
+      } catch (lidarErr) {
+        console.warn('Could not load LiDAR points:', lidarErr);
+      }
     } catch (e) {
       console.error('Error selecting parcel:', e);
     }

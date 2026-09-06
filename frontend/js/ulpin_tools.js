@@ -84,7 +84,8 @@ class ULPINToolsController {
     }
 
     try {
-      const resp = await fetch('/api/ulpin/encode', {
+      const fetchFn = window.safeFetch || fetch;
+      const resp = await fetchFn('/api/ulpin/encode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ latitude: lat, longitude: lon, floor: floor })
@@ -162,7 +163,8 @@ class ULPINToolsController {
     }
 
     try {
-      const resp = await fetch('/api/ulpin/decode', {
+      const fetchFn = window.safeFetch || fetch;
+      const resp = await fetchFn('/api/ulpin/decode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ulpin: ulpin })

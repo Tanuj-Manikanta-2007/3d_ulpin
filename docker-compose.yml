@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 16 + PostGIS 3.4
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: ulpin_postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ulpin_cadastre
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # High-performance Vector Tile Server (serves Mapbox Vector Tiles .pbf directly from PostGIS)
+  pg_tileserv:
+    image: pramsey/pg_tileserv:latest
+    container_name: ulpin_tileserv
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgrespassword@postgis:5432/ulpin_cadastre
+    ports:
+      - "7800:7800"
+    depends_on:
+      postgis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

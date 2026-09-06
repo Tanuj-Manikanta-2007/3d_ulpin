@@ -12,6 +12,9 @@ __pycache__/
 # Environment variables
 .env
 
+# Local runtime database
+data/*.db
+
 # IDE & Editor files
 .vscode/
 .idea/
