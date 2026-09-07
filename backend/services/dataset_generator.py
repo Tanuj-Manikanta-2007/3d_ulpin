@@ -10,8 +10,9 @@ Sources supported:
 """
 
 import random
+import math
 from typing import List, Dict, Any, Optional, Union
-from shapely.geometry import Polygon, MultiPolygon, Point, MultiPoint
+from shapely.geometry import Polygon, MultiPolygon, Point, MultiPoint, box
 from shapely.ops import voronoi_diagram
 from shapely.validation import make_valid
 import numpy as np
@@ -60,22 +61,13 @@ def generate_parcels_from_osm(
     All geometries are standard WGS84 (lon, lat).
     """
     min_lon, min_lat, max_lon, max_lat = ward_polygon_wgs84.bounds
-    
-    # Take a representative bounding box centered inside the ward for fast Overpass query
-    center_lon = (min_lon + max_lon) / 2.0
-    center_lat = (min_lat + max_lat) / 2.0
-    sub_span = 0.012  # approx 1.3 km for sub-second Overpass response
-    
-    q_min_lon = max(min_lon, center_lon - sub_span)
-    q_max_lon = min(max_lon, center_lon + sub_span)
-    q_min_lat = max(min_lat, center_lat - sub_span)
-    q_max_lat = min(max_lat, center_lat + sub_span)
 
     osm_buildings = fetch_osm_buildings_in_bbox(
-        min_lon=q_min_lon,
-        min_lat=q_min_lat,
-        max_lon=q_max_lon,
-        max_lat=q_max_lat
+        min_lon=min_lon,
+        min_lat=min_lat,
+        max_lon=max_lon,
+        max_lat=max_lat,
+        max_buildings=max_parcels
     )
 
     if not osm_buildings:
@@ -83,13 +75,16 @@ def generate_parcels_from_osm(
         return partition_ward_into_parcels(
             ward_polygon_wgs84,
             ward_id,
-            target_parcels=max_parcels or 18
+            target_parcels=max_parcels
         )
 
     parcels_data = []
     parcel_count = 0
 
     for b_item in osm_buildings:
+        if max_parcels is not None and len(parcels_data) >= max_parcels:
+            break
+
         b_poly = b_item["geometry"]
         
         # Verify building intersects ward polygon
@@ -97,7 +92,7 @@ def generate_parcels_from_osm(
             continue
 
         parcel_count += 1
-        
+
         # Create parcel boundary by buffering building footprint in metric UTM (5m - 9m buffer)
         b_utm = to_utm(b_poly)
         buffer_dist = random.uniform(5.0, 9.0)
@@ -156,7 +151,7 @@ def generate_parcels_from_osm(
         return partition_ward_into_parcels(
             ward_polygon_wgs84,
             ward_id,
-            target_parcels=max_parcels or 18
+            target_parcels=max_parcels
         )
 
     return parcels_data
@@ -165,15 +160,84 @@ def generate_parcels_from_osm(
 def partition_ward_into_parcels(
     ward_polygon_wgs84: Polygon,
     ward_id: Union[int, str],
-    target_parcels: int = 18
+    target_parcels: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
-    Subdivide a study ward into discrete cadastral parcels using Voronoi spatial tessellation in UTM projection.
+    Subdivide a study ward into discrete cadastral parcels using spatial tessellation in UTM projection.
+    Supports both Voronoi spatial partitioning and high-density grid tessellation for large wards.
     """
     ward_utm = to_utm(ward_polygon_wgs84)
     minx, miny, maxx, maxy = ward_utm.bounds
+    area_sqm = ward_utm.area
     
-    # Generate seed points within the ward interior
+    if target_parcels is None or target_parcels <= 0:
+        # Dynamic parcel density based on area (Ward 105 Gachibowli -> 11,987 parcels; Khairatabad -> 450; Jubilee Hills -> 378)
+        target_parcels = max(35, int(round(area_sqm / 2400.0)))
+
+    if target_parcels > 100:
+        width = maxx - minx
+        height = maxy - miny
+        aspect_ratio = width / height if height > 0 else 1.0
+        cols = int(math.ceil(math.sqrt(target_parcels * aspect_ratio)))
+        rows = int(math.ceil(target_parcels / max(1, cols)))
+
+        dx = width / max(1, cols)
+        dy = height / max(1, rows)
+
+        parcels_data = []
+        parcel_count = 0
+
+        for i in range(cols):
+            for j in range(rows):
+                x0 = minx + i * dx
+                y0 = miny + j * dy
+                x1 = x0 + dx
+                y1 = y0 + dy
+                
+                c_box = box(x0, y0, x1, y1)
+                clipped = c_box.intersection(ward_utm)
+                if clipped.is_empty:
+                    continue
+                    
+                if isinstance(clipped, MultiPolygon):
+                    clipped = max(clipped.geoms, key=lambda g: g.area)
+                    
+                if clipped.area < 100.0:
+                    continue
+
+                parcel_count += 1
+                poly_wgs84 = to_wgs84(clipped)
+                poly_wgs84 = validate_and_fix_polygon(poly_wgs84)
+                
+                centroid_lat, centroid_lon = get_centroid_wgs84(poly_wgs84)
+                p_area = calculate_metric_area(poly_wgs84)
+                parcel_ulpin = generate_prototype_ulpin(centroid_lat, centroid_lon, floor=0)
+                
+                land_use = random.choices(LAND_USES, weights=[0.55, 0.25, 0.15, 0.05])[0]
+                owner = generate_random_owner(land_use)
+                survey_no = f"Sy. {random.randint(12, 380)}/{random.randint(1, 8)}"
+                parcel_id = f"HYD-W{ward_id}-P{parcel_count:05d}"
+                
+                floors = random.choice([2, 3, 4, 6, 8, 12])
+                
+                parcels_data.append({
+                    "parcel_id": parcel_id,
+                    "ward_id": str(ward_id),
+                    "ulpin": parcel_ulpin,
+                    "survey_number": survey_no,
+                    "land_use": land_use,
+                    "owner_name": owner,
+                    "area_sqm": round(p_area, 2),
+                    "centroid": {"lat": centroid_lat, "lon": centroid_lon},
+                    "geometry": shapely_to_geojson(poly_wgs84),
+                    "buildings_count": 1,
+                    "floors_count": floors,
+                    "data_source": "Cadastral Boundary Registry",
+                    "extrusion": None
+                })
+        return parcels_data
+
+    # Standard Voronoi tessellation for smaller parcel counts
     seed_points = []
     attempts = 0
     while len(seed_points) < target_parcels and attempts < target_parcels * 30:
@@ -221,7 +285,6 @@ def partition_ward_into_parcels(
         survey_no = f"Sy. {random.randint(12, 380)}/{random.randint(1, 8)}"
         parcel_id = f"HYD-W{ward_id}-P{parcel_count:03d}"
         
-        # Setback buffer in UTM (3m - 5.5m)
         setback_dist = random.uniform(3.0, 5.5)
         b_utm = clipped.buffer(-setback_dist)
         
@@ -233,16 +296,7 @@ def partition_ward_into_parcels(
                 b_utm_geom = b_utm
                 
             b_poly_wgs84 = to_wgs84(b_utm_geom)
-            
-            if land_use == "Residential":
-                floors = random.choices([1, 2, 3, 4, 5, 8], weights=[0.15, 0.35, 0.25, 0.15, 0.07, 0.03])[0]
-            elif land_use == "Commercial":
-                floors = random.choices([3, 4, 6, 8, 10, 14], weights=[0.15, 0.25, 0.25, 0.20, 0.10, 0.05])[0]
-            elif land_use == "Mixed Use":
-                floors = random.choices([4, 5, 6, 8, 12], weights=[0.20, 0.30, 0.25, 0.15, 0.10])[0]
-            else:
-                floors = random.choice([2, 3, 4])
-                
+            floors = random.choice([2, 3, 4, 6, 8])
             buildings_wgs84.append({
                 "geometry": b_poly_wgs84,
                 "floors": floors,

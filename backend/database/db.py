@@ -104,12 +104,12 @@ class SpatialDatabase:
     def generate_ward_parcels(
         self,
         ward_id: str,
-        target_parcels: int = 16,
-        source: str = "osm"
+        target_parcels: Optional[int] = None,
+        source: str = "synthetic"
     ) -> List[Dict[str, Any]]:
         """
         Generate cadastral parcels, 3D buildings, and 3D ULPINs for a ward.
-        Supports 'osm' (Live Overpass API) or 'synthetic' (Voronoi partitioning).
+        Supports 'synthetic' (Instant Voronoi partitioning) or 'osm' (Live Overpass API).
         """
         with self._lock:
             ward = self.wards.get(str(ward_id))
@@ -135,7 +135,7 @@ class SpatialDatabase:
                 new_parcels = generate_parcels_from_osm(
                     ward_polygon_wgs84=sh_geom,
                     ward_id=ward_id,
-                    max_parcels=None
+                    max_parcels=target_parcels
                 )
             else:
                 new_parcels = partition_ward_into_parcels(
@@ -167,12 +167,13 @@ class SpatialDatabase:
                 ward_str = str(ward_id)
                 results = [p for p in results if p["ward_id"] == ward_str]
                 if len(results) == 0 and ward_str in self.wards:
-                    # Auto-generate parcels for any selected ward on-the-fly
+                    # Auto-generate all parcels for any selected ward on-the-fly instantly
                     try:
-                        results = self.generate_ward_parcels(ward_str, target_parcels=16, source="osm")
+                        results = self.generate_ward_parcels(ward_str, target_parcels=None, source="synthetic")
                     except Exception as e:
                         print(f"[Database] Auto-generation error for ward {ward_str}: {e}")
                         results = []
+
 
                 
             if land_use and land_use.lower() != "all":
@@ -257,10 +258,16 @@ class SpatialDatabase:
                 
                 ext = p.get("extrusion") or {}
                 b_list = ext.get("buildings", [])
-                total_buildings += len(b_list)
-                for b in b_list:
-                    total_3d_units += len(b.get("floors", []))
-                    total_built_up_area += b.get("built_up_area_sqm", 0.0)
+                if b_list:
+                    total_buildings += len(b_list)
+                    for b in b_list:
+                        total_3d_units += len(b.get("floors", []))
+                        total_built_up_area += b.get("built_up_area_sqm", 0.0)
+                else:
+                    total_buildings += p.get("buildings_count", 1)
+                    fc = p.get("floors_count", 3)
+                    total_3d_units += (fc + 2)  # Above ground floors + underground units
+                    total_built_up_area += p.get("area_sqm", 0.0) * fc * 0.60
 
             return {
                 "total_wards": total_wards,
@@ -282,7 +289,7 @@ def seed_initial_wards():
     for wid in ["1", "0", "3"]:
         if wid in db_instance.wards:
             try:
-                db_instance.generate_ward_parcels(wid, target_parcels=14, source="synthetic")
+                db_instance.generate_ward_parcels(wid, target_parcels=None, source="synthetic")
                 print(f"[Seed] Generated default 3D parcels for Ward ID {wid} ({db_instance.wards[wid]['name']})")
             except Exception as e:
                 print(f"[Seed] Note on seeding ward {wid}: {e}")

@@ -98,7 +98,7 @@ def get_ward(ward_id: str = Path(..., description="Ward ID")):
 @app.post("/api/wards/{ward_id}/generate")
 def generate_ward_parcels(
     ward_id: str = Path(..., description="Ward ID"),
-    count: int = Query(18, ge=4, le=60, description="Target number of parcels to generate"),
+    count: Optional[int] = Query(None, description="Optional limit on target number of parcels to generate"),
     source: str = Query("osm", description="Data source: 'osm' (Live OpenStreetMap) or 'synthetic' (Voronoi partitioning)")
 ):
     """Generate parcels, 3D building extrusions, and 3D ULPINs for a selected ward from OSM or Synthetic generator."""
@@ -164,13 +164,35 @@ def get_parcel(parcel_id: str = Path(..., description="Parcel ID or 14-char ULPI
     return parcel
 
 
+from backend.services.extrusion_engine import extrude_parcel_and_buildings
+
+
 @app.get("/api/parcels/{parcel_id}/3d")
 def get_parcel_3d(parcel_id: str = Path(..., description="Parcel ID or 14-char ULPIN")):
     """Get 3D extruded mesh, floor units, and elevation profile for 3D visualization."""
     parcel = db_instance.get_parcel(parcel_id)
     if not parcel:
         raise HTTPException(status_code=404, detail=f"Parcel {parcel_id} not found")
-    return parcel.get("extrusion", {})
+
+    ext = parcel.get("extrusion")
+    if not ext:
+        poly_wgs84 = geojson_to_shapely(parcel["geometry"])
+        floors = parcel.get("floors_count", 4)
+        ext = extrude_parcel_and_buildings(
+            parcel_wgs84=poly_wgs84,
+            buildings_wgs84=[{
+                "geometry": poly_wgs84.buffer(-0.00003),
+                "floors": floors,
+                "floor_height": 3.2,
+                "name": f"Building {parcel['parcel_id']}"
+            }],
+            parcel_ulpin=parcel["ulpin"],
+            parcel_id=parcel["parcel_id"],
+            land_use=parcel.get("land_use", "Residential"),
+            owner_name=parcel.get("owner_name", "Owner")
+        )
+        parcel["extrusion"] = ext
+    return ext
 
 
 @app.get("/api/parcels/{parcel_id}/lidar")

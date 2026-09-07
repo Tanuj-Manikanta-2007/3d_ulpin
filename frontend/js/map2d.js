@@ -32,7 +32,8 @@ class Map2DController {
     // Center on Hyderabad coordinates (Lat: 17.44, Lon: 78.38)
     this.map = L.map(this.containerId, {
       zoomControl: false,
-      attributionControl: false
+      attributionControl: false,
+      preferCanvas: true
     }).setView([17.4400, 78.3800], 13);
 
     // Free, reliable tile layers with zero API key required

@@ -26,8 +26,8 @@ OVERPASS_ENDPOINTS = [
 ]
 
 
-def query_overpass(query_str: str, timeout: int = 20) -> Optional[Dict[str, Any]]:
-    """Execute Overpass QL query with automatic endpoint failover."""
+def query_overpass(query_str: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
+    """Execute Overpass QL query with 5.0s timeout and automatic endpoint failover."""
     headers = {
         "User-Agent": "3D-ULPIN-Cadastral-Engine/1.0 (Hyderabad-Digital-Twin)"
     }
@@ -42,10 +42,10 @@ def query_overpass(query_str: str, timeout: int = 20) -> Optional[Dict[str, Any]
             )
             if resp.status_code == 200:
                 return resp.json()
-        except Exception as e:
-            print(f"[OSM Overpass] Endpoint {endpoint} failed: {e}")
+        except Exception:
             continue
     return None
+
 
 
 def fetch_osm_buildings_in_bbox(

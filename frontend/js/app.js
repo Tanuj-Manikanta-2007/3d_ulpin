@@ -194,7 +194,7 @@ class App {
     btn.disabled = true;
 
     try {
-      const resp = await fetch(`/api/wards/${this.currentWardId}/generate?count=18&source=${source}`, {
+      const resp = await fetch(`/api/wards/${this.currentWardId}/generate?source=${source}`, {
         method: 'POST'
       });
 
