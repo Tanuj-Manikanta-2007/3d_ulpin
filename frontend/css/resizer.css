@@ -1,0 +1,173 @@
+/* ==========================================================================
+   resizer.css — LeetCode-Style Draggable Split-Pane Dividers & Windows
+   ========================================================================== */
+
+/* Main split container */
+.app-container {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100vw;
+  height: calc(100vh - 90px); /* Main Navbar (52px) + Sub-Navbar Toolbar (38px) = 90px */
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+/* Three Core Panes */
+#pane-map2d {
+  min-width: 200px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#pane-view3d {
+  min-width: 240px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#pane-inspector {
+  min-width: 260px;
+  max-width: 700px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: rgba(16, 22, 36, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-glass);
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    width: 100%;
+    flex-direction: column !important;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  #pane-map2d,
+  #pane-view3d,
+  #pane-inspector {
+    width: 100% !important;
+    min-width: 0;
+    max-width: none;
+    flex: 0 0 360px !important;
+  }
+
+  #pane-inspector {
+    flex-basis: auto;
+    min-height: 420px;
+  }
+
+  .split-gutter {
+    width: 100%;
+    height: 7px;
+    flex: 0 0 7px;
+    cursor: row-resize;
+  }
+
+  .gutter-handle {
+    width: 28px;
+    height: 3px;
+  }
+}
+
+/* LeetCode Vertical Splitter Gutters */
+.split-gutter {
+  width: 7px;
+  flex-shrink: 0;
+  position: relative;
+  background: rgba(15, 23, 42, 0.85);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: col-resize;
+  z-index: 700;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+  -webkit-user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Center Grip Handle (3-dot grip) */
+.gutter-handle {
+  width: 3px;
+  height: 28px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+  transition: all 0.15s ease;
+  pointer-events: none;
+  position: relative;
+}
+
+.gutter-handle::before,
+.gutter-handle::after {
+  content: '';
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 50%;
+  left: 0;
+  transition: all 0.15s ease;
+}
+
+.gutter-handle::before {
+  top: -7px;
+}
+
+.gutter-handle::after {
+  bottom: -7px;
+}
+
+/* Hover State */
+.split-gutter:hover {
+  background: rgba(0, 242, 254, 0.35);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.4);
+}
+
+.split-gutter:hover .gutter-handle,
+.split-gutter:hover .gutter-handle::before,
+.split-gutter:hover .gutter-handle::after {
+  background: #00f2fe;
+  box-shadow: 0 0 6px #00f2fe;
+}
+
+/* Active Dragging State */
+.split-gutter.is-dragging {
+  background: #00f2fe !important;
+  box-shadow: 0 0 16px rgba(0, 242, 254, 0.8) !important;
+}
+
+.split-gutter.is-dragging .gutter-handle,
+.split-gutter.is-dragging .gutter-handle::before,
+.split-gutter.is-dragging .gutter-handle::after {
+  background: #ffffff !important;
+}
+
+/* Resizing Global State */
+body.resizing-active {
+  cursor: col-resize !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+body.resizing-active * {
+  cursor: col-resize !important;
+}
+
+/* Disable pointer events on canvas & interactive elements while dragging */
+body.resizing-active #map2d,
+body.resizing-active #view3d-canvas,
+body.resizing-active #cesium-container,
+body.resizing-active iframe,
+body.resizing-active canvas {
+  pointer-events: none !important;
+}

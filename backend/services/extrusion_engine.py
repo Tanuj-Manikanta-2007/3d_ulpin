@@ -167,7 +167,8 @@ def generate_3d_mesh(
     Generate 3D mesh data (vertices and triangular faces) for Three.js rendering.
     Coordinates are normalized relative to origin_utm for local 3D rendering.
     """
-    coords = list(footprint_utm.exterior.coords)
+    raw_coords = list(footprint_utm.exterior.coords)
+    coords = [(c[0], c[1]) for c in raw_coords]
     if len(coords) > 1 and coords[0] == coords[-1]:
         coords = coords[:-1]  # drop duplicate closing vertex
         

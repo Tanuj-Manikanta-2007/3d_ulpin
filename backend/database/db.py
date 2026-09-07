@@ -58,9 +58,9 @@ class SpatialDatabase:
         data_dir = os.path.join(self.base_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
 
-        # Database URL: PostgreSQL if configured, otherwise local SQLite
+        # Database URL: PostgreSQL / PostGIS if configured, otherwise local SQLite
         if db_url is None:
-            db_url = os.getenv("DATABASE_URL", "").strip()
+            db_url = (os.getenv("DATABASE_URL") or os.getenv("POSTGIS_URL") or os.getenv("POSTGRES_URL") or "").strip()
         
         self.is_sqlite = True
         sqlite_path = os.path.join(data_dir, "cadastre.db").replace("\\", "/")
@@ -309,13 +309,13 @@ class SpatialDatabase:
                     session.commit()
                     print(f"[Database] Seeded {len(other_ward_objs)} Flagship Wards across Bengaluru, Mumbai, and Delhi.")
 
-                # 4. Seed initial default parcels for Hyderabad Ward 1 if empty
+                # 4. Seed initial default parcels for Hyderabad Flagship Wards if empty
                 if session.query(ParcelTable).count() == 0:
                     session.close()
-                    for wid in ["1", "0"]:
+                    for wid in ["1", "0", "3"]:
                         try:
-                            self.generate_ward_parcels(ward_id=wid, target_parcels=14, source="synthetic")
-                            print(f"[Seed] Generated default 3D parcels for Hyderabad Ward ID {wid}")
+                            self.generate_ward_parcels(ward_id=wid, target_parcels=None, source="synthetic", max_db_parcels=100)
+                            print(f"[Seed] Generated all default 3D parcels for Hyderabad Ward ID {wid} (100 stored in DB)")
                         except Exception as e:
                             print(f"[Seed] Note on seeding ward {wid}: {e}")
             except Exception as e:
@@ -483,15 +483,15 @@ class SpatialDatabase:
         search: Optional[str] = None,
         bbox: Optional[List[float]] = None,
         source: str = "osm",
-        limit: Optional[int] = 60
+        limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         DB-First Parcel Retrieval:
         1. Checks in-memory cache for ultra-fast (sub-millisecond) response.
         2. Checks database table `parcels`.
-        3. If parcels exist in DB -> returns them immediately and caches in memory.
-        4. If NO parcels exist in DB for this ward -> generates them via OSM / synthetic cadastre,
-           persists them into PostgreSQL (capped at 50 parcels), and caches them for all future requests.
+        3. If parcels exist in DB and cache -> returns all cached parcels (with 100 flagged as DB-persisted).
+        4. If NO parcels exist in DB for this ward -> generates all ward parcels on-demand,
+           persists 100 representative parcels into Database, and caches all for full-ward 2D rendering.
         """
         # 1. Fast in-memory cache lookup for ward queries
         if ward_id and not land_use and not search and not bbox:
@@ -535,10 +535,10 @@ class SpatialDatabase:
 
                 parcels_db = query.all()
 
-                # 2. If ward has no parcels in DB yet, generate on-demand, persist up to 50 to DB, and cache all
+                # 2. If ward has no parcels in DB yet, generate on-demand, persist 100 to DB, and cache all
                 if not parcels_db and ward_id and not land_use and not search and not bbox:
                     session.close()
-                    new_parcels = self.generate_ward_parcels(ward_id=str(ward_id), target_parcels=None, source=source, max_db_parcels=50)
+                    new_parcels = self.generate_ward_parcels(ward_id=str(ward_id), target_parcels=None, source=source, max_db_parcels=100)
                     return new_parcels[:limit] if limit and limit > 0 else new_parcels
 
                 results = []
@@ -588,11 +588,11 @@ class SpatialDatabase:
         ward_id: str,
         target_parcels: Optional[int] = None,
         source: str = "osm",
-        max_db_parcels: int = 50
+        max_db_parcels: int = 100
     ) -> List[Dict[str, Any]]:
         """
         Generate cadastral parcels, 3D buildings, and 3D ULPINs for a ward.
-        Saves and commits up to 50 generated parcels and 3D units directly into PostgreSQL.
+        Saves and commits up to 100 generated parcels and 3D units directly into Database.
         Uses zero-idle DB pattern: external OSM queries are run entirely outside of any DB session.
         """
         with self._lock:
@@ -737,16 +737,16 @@ class SpatialDatabase:
                 finally:
                     session.close()
 
-            # 6. Cache the 50 DB parcels for ward re-visits, while keeping all in parcels_lookup for 3D inspection
-            self._parcels_cache[str(ward_id)] = db_parcels
+            # 6. Cache ALL generated parcels for full ward 2D/3D coverage, while storing 100 in DB
+            self._parcels_cache[str(ward_id)] = all_parcels
             if hasattr(self, "_wards_cache") and str(ward_id) in self._wards_cache:
-                self._wards_cache[str(ward_id)]["parcels_count"] = len(db_parcels)
+                self._wards_cache[str(ward_id)]["parcels_count"] = len(all_parcels)
 
             for p in all_parcels:
                 self._parcels_lookup[p["parcel_id"]] = p
                 self._parcels_lookup[p["ulpin"]] = p
 
-            print(f"[Database] Generated all {len(all_parcels)} parcels for Ward {ward_id}. Persisted {len(db_parcels)} parcels and {len(floor_records)} 3D floor units into PostgreSQL.")
+            print(f"[Database] Generated all {len(all_parcels)} parcels for Ward {ward_id}. Persisted {len(db_parcels)} parcels and {len(floor_records)} 3D floor units into Database.")
             return all_parcels
 
     def get_parcel(self, parcel_id: str) -> Optional[Dict[str, Any]]:

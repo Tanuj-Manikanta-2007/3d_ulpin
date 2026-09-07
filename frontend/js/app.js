@@ -90,7 +90,36 @@ class App {
     this.ulpinTools = new ULPINToolsController();
     this.currentTiles3D = null;
 
-    // 2. Bind UI Events
+    // 2. Initialize LeetCode-Style Split-Pane Resizer
+    this.resizer = new SplitPaneManager({
+      container: '.app-container',
+      paneMap: 'pane-map2d',
+      pane3D: 'pane-view3d',
+      paneInspector: 'pane-inspector',
+      gutter1: 'gutter-1',
+      gutter2: 'gutter-2',
+      onResize: () => {
+        if (this.map2d && this.map2d.map) {
+          this.map2d.map.invalidateSize();
+        }
+        if (this.viewer3d) {
+          this.viewer3d.onWindowResize();
+        }
+        if (this.cesiumViewer && this.cesiumViewer.viewer) {
+          this.cesiumViewer.viewer.resize();
+        }
+      }
+    });
+
+    // 3. Initialize Municipal Officer Authentication Manager
+    this.officerAuth = new OfficerAuthManager({
+      onLoginSuccess: (officer) => {
+        const ingestModal = document.getElementById('ingest-modal');
+        if (ingestModal) ingestModal.classList.add('active');
+      }
+    });
+
+    // 4. Bind UI Events
     this.bindUIEvents();
 
     // 3. Load Initial Data
@@ -748,6 +777,10 @@ class App {
 
     if (btnOpen && modal) {
       btnOpen.addEventListener('click', () => {
+        if (this.officerAuth && !this.officerAuth.isLoggedIn()) {
+          this.officerAuth.openModal('Municipal Officer Authentication Required to upload drone LiDAR scans and architectural blueprints.');
+          return;
+        }
         modal.classList.add('active');
         if (logBox) logBox.style.display = 'none';
       });

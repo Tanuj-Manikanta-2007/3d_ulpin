@@ -23,7 +23,8 @@ from backend.services.spatial_service import (
     validate_and_fix_polygon,
     calculate_metric_area,
     get_centroid_wgs84,
-    shapely_to_geojson
+    shapely_to_geojson,
+    geojson_to_shapely
 )
 from backend.services.ulpin_generator import generate_prototype_ulpin
 from backend.services.extrusion_engine import extrude_parcel_and_buildings
@@ -101,10 +102,10 @@ def generate_parcels_from_osm(
 
     # Total detected building count across the ward
     total_detected = max(len(valid_buildings), total_osm_count)
-    print(f"[Dataset Generator] Detected {total_detected} buildings in Ward {ward_id} (OSM). Generating all {len(valid_buildings)} parcels, with 50 selected for DB persistence.")
+    print(f"[Dataset Generator] Detected {total_detected} buildings in Ward {ward_id} (OSM). Generating all {len(valid_buildings)} parcels, with 100 selected for DB persistence.")
 
-    # 4. Generate parcels for ALL valid buildings in the ward, tagging 50 for database persistence
-    target_db_count = min(50, len(valid_buildings))
+    # 4. Generate parcels for ALL valid buildings in the ward, tagging 100 for database persistence
+    target_db_count = min(100, len(valid_buildings))
     if len(valid_buildings) > target_db_count:
         step = len(valid_buildings) / float(target_db_count)
         persisted_indices = set(int(i * step) for i in range(target_db_count))
@@ -267,6 +268,38 @@ def partition_ward_into_parcels(
                     "data_source": "Cadastral Boundary Registry",
                     "extrusion": None
                 })
+
+        # Tag 100 evenly sampled parcels for DB persistence and generate 3D extrusion
+        target_db_count = min(100, len(parcels_data))
+        if len(parcels_data) > target_db_count:
+            step = len(parcels_data) / float(target_db_count)
+            persisted_indices = set(int(i * step) for i in range(target_db_count))
+        else:
+            persisted_indices = set(range(len(parcels_data)))
+
+        for idx, p in enumerate(parcels_data):
+            is_p = (idx in persisted_indices)
+            p["is_persisted_to_db"] = is_p
+            p["total_detected_in_ward"] = len(parcels_data)
+            if is_p and not p.get("extrusion"):
+                p_sh = geojson_to_shapely(p["geometry"])
+                b_poly = p_sh.buffer(-random.uniform(2.0, 4.0))
+                if b_poly.is_empty or b_poly.area < 20.0:
+                    b_poly = p_sh
+                p["extrusion"] = extrude_parcel_and_buildings(
+                    parcel_wgs84=p_sh,
+                    buildings_wgs84=[{
+                        "geometry": b_poly,
+                        "floors": p.get("floors_count", 3),
+                        "floor_height": 3.2,
+                        "name": f"Building {p['parcel_id']}"
+                    }],
+                    parcel_ulpin=p["ulpin"],
+                    parcel_id=p["parcel_id"],
+                    land_use=p["land_use"],
+                    owner_name=p["owner_name"]
+                )
+
         return parcels_data
 
     # Standard Voronoi tessellation for smaller parcel counts
@@ -374,8 +407,8 @@ def partition_ward_into_parcels(
             "extrusion": extrusion_data
         })
 
-    # Tag 50 evenly sampled parcels for DB persistence
-    target_db_count = min(50, len(parcels_data))
+    # Tag 100 evenly sampled parcels for DB persistence
+    target_db_count = min(100, len(parcels_data))
     if len(parcels_data) > target_db_count:
         step = len(parcels_data) / float(target_db_count)
         persisted_indices = set(int(i * step) for i in range(target_db_count))

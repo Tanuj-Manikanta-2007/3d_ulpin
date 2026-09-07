@@ -20,90 +20,104 @@
   <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
   
-  <!-- Custom CSS -->
+  <!-- Modular CSS Sheets -->
   <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/static/css/resizer.css">
+  <link rel="stylesheet" href="/static/css/modals.css">
   
   <!-- Favicon -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏢</text></svg>">
 </head>
 <body>
 
-  <!-- Top Navigation Header -->
-  <header class="navbar">
-    <div class="brand-container">
+  <!-- ================= Tier 1: Main Header (Brand + Omnibox + Global Actions) ================= -->
+  <header class="navbar main-header">
+    <!-- Left: Branding -->
+    <div class="nav-left brand-container">
       <div class="brand-icon">
         <i class="fa-solid fa-cube"></i>
       </div>
-      <div>
-        <div class="brand-title">3D ULPIN HYDERABAD</div>
-        <div class="brand-subtitle">Cadastral Digital Twin & Volumetric Land Registry</div>
+      <div class="title-group">
+        <h1 class="brand-title">3D ULPIN HYDERABAD</h1>
+        <span class="subtitle brand-subtitle">Cadastral Digital Twin & Volumetric Land Registry</span>
       </div>
     </div>
 
-    <div class="nav-controls">
+    <!-- Center: Search Omnibox -->
+    <div class="nav-center">
+      <div class="search-box">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" id="search-input" class="search-input" placeholder="Search ULPIN, Owner, Survey No...">
+      </div>
+    </div>
+
+    <!-- Right: Global Actions Button Group -->
+    <div class="nav-right">
+      <div class="button-group">
+        <button id="btn-generate-parcels" class="btn btn-primary" title="Generate all parcels for ward and persist 100 in DB">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generate 3D Parcels</span>
+        </button>
+        <button id="btn-open-ingest-portal" class="btn btn-secondary" style="border-color: #10b981; color: #10b981;" title="Upload Drone LiDAR & Architectural Floor Plans">
+          <i class="fa-solid fa-cloud-arrow-up"></i> <span>Ward Portal</span>
+        </button>
+        <button id="btn-officer-login" class="btn btn-secondary" title="Municipal Officer Authentication">
+          <i class="fa-solid fa-user-shield"></i> <span>Officer Login</span>
+        </button>
+        <button id="btn-open-ulpin-tool" class="btn btn-secondary" title="DoLR/NIC 3D ULPIN Engine">
+          <i class="fa-solid fa-calculator"></i> <span>ULPIN Tool</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= Tier 2: Sub-Header Toolbar (Filters + KPI Live Stats) ================= -->
+  <nav class="sub-navbar">
+    <!-- Left: Hierarchical Admin Filters -->
+    <div class="sub-nav-left">
       <!-- State Selector -->
-      <div class="ward-selector-group">
+      <div class="filter-item ward-selector-group">
         <label for="state-select"><i class="fa-solid fa-flag"></i> State:</label>
-        <select id="state-select" class="styled-select" style="min-width: 120px;">
+        <select id="state-select" class="styled-select" style="min-width: 90px;">
           <option value="TS">Telangana</option>
         </select>
       </div>
 
       <!-- City/ULB Selector -->
-      <div class="ward-selector-group">
+      <div class="filter-item ward-selector-group">
         <label for="city-select"><i class="fa-solid fa-city"></i> City:</label>
-        <select id="city-select" class="styled-select" style="min-width: 150px;">
+        <select id="city-select" class="styled-select" style="min-width: 130px;">
           <option value="TS-HYD">Hyderabad (GHMC)</option>
         </select>
       </div>
 
       <!-- Ward Selector -->
-      <div class="ward-selector-group">
+      <div class="filter-item ward-selector-group">
         <label for="ward-select"><i class="fa-solid fa-map-location-dot"></i> Ward:</label>
-        <select id="ward-select" class="styled-select" style="min-width: 180px;">
+        <select id="ward-select" class="styled-select" style="min-width: 160px;">
           <option value="1">Loading wards...</option>
         </select>
       </div>
 
       <!-- Data Source Selector -->
-      <div class="ward-selector-group">
+      <div class="filter-item ward-selector-group">
         <label for="source-select"><i class="fa-solid fa-satellite"></i> Mode:</label>
         <select id="source-select" class="styled-select">
           <option value="synthetic" selected>Synthetic Cadastre (Instant)</option>
           <option value="osm">OpenStreetMap (Live Query)</option>
         </select>
-
       </div>
 
-      <div class="ward-selector-group">
+      <!-- Database Cache Status Badge -->
+      <div class="filter-item ward-selector-group db-cache-badge-group">
         <label><i class="fa-solid fa-database"></i> DB Cache:</label>
-        <span class="badge" style="background: rgba(0, 242, 254, 0.12); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.3); padding: 5px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap;">
-          50 in DB
+        <span class="badge" style="background: rgba(0, 242, 254, 0.12); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.3); padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap;">
+          100 in DB
         </span>
       </div>
-
-      <!-- Search Input -->
-      <div class="search-box">
-        <i class="fa-solid fa-magnifying-glass search-icon"></i>
-        <input type="text" id="search-input" class="search-input" placeholder="Search ULPIN, Owner, Survey...">
-      </div>
-
-      <!-- Action Buttons -->
-      <button id="btn-generate-parcels" class="btn btn-primary">
-        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate 3D Parcels
-      </button>
-      <button id="btn-open-ingest-portal" class="btn btn-secondary" style="border-color: #10b981; color: #10b981;">
-        <i class="fa-solid fa-cloud-arrow-up"></i> Ward Portal
-      </button>
-      <button id="btn-open-ulpin-tool" class="btn btn-secondary">
-        <i class="fa-solid fa-calculator"></i> ULPIN Tool
-      </button>
     </div>
-  </header>
 
-  <!-- KPI Stats Bar -->
-  <div class="stats-bar">
-    <div class="stats-group">
+    <!-- Right: KPI Live Stats -->
+    <div class="sub-nav-right">
       <div class="stat-item">
         <span class="stat-label">Active Wards:</span>
         <span id="stat-wards-count" class="stat-value highlight-cyan">--</span>
@@ -120,54 +134,73 @@
         <span class="stat-label">Total Area:</span>
         <span id="stat-area-count" class="stat-value highlight-purple">--</span>
       </div>
+      <div class="stat-item coord-spec">
+        <span class="stat-label" style="font-family: var(--font-mono); color: #64748b;">EPSG:4326 | EPSG:32644</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ================= LeetCode-Style 3-Pane Resizable Workspace ================= -->
+  <main class="app-container" id="app-split-container">
+    
+    <!-- Pane 1: 2D Cadastral Boundary Map -->
+    <section class="viewport-panel" id="pane-map2d">
+      <div class="viewport-bar">
+        <div class="viewport-title-chip">
+          <span class="badge-dot"></span>
+          <span class="v-title">2D Cadastral Boundary View</span>
+        </div>
+        <div class="viewport-status-tag">
+          <span class="mini-indicator-dot"></span>
+          <span>Vector Cadastre</span>
+        </div>
+      </div>
+      <div id="map2d" class="map-container"></div>
+    </section>
+
+    <!-- Resizer Gutter 1 (Between 2D Map & 3D Viewport) -->
+    <div class="split-gutter" id="gutter-1" title="Drag to resize 2D Map and 3D View (Double click to reset)">
+      <div class="gutter-handle"></div>
     </div>
 
-    <div class="stats-group">
-      <span class="stat-label"><i class="fa-solid fa-shield-halved" style="color: #00f2fe;"></i> DoLR/NIC Standard Coordinate Encodings</span>
-      <span class="stat-label" style="font-family: var(--font-mono); color: #64748b;">EPSG:4326 | EPSG:32644</span>
-    </div>
-  </div>
+    <!-- Pane 2: 3D Volumetric Digital Twin & LiDAR Viewport -->
+    <section class="viewport-panel" id="pane-view3d">
+      <!-- Dedicated Viewport Top Bar (Non-Overlapping Flex Row) -->
+      <div class="viewport-bar">
+        <div class="viewport-title-chip" style="border-color: rgba(168, 85, 247, 0.4);">
+          <span class="badge-dot" style="background: #a855f7; box-shadow: 0 0 8px #a855f7;"></span>
+          <span class="v-title">3D Digital Twin & LiDAR</span>
+        </div>
 
-  <!-- Main Work Area (Dual Viewports + Inspector) -->
-  <main class="app-container">
-    <div class="viewports-container">
-      
-      <!-- 2D Cadastral Map Viewport -->
-      <div class="viewport-panel">
-        <div class="viewport-header">
-          <div class="viewport-badge">
-            <span class="badge-dot"></span> 2D Cadastral Boundary View
+        <!-- Viewport Tools Deck (Segmented Mode Switcher + Action Icons) -->
+        <div class="viewport-tools-deck">
+          <!-- Segmented View Mode Toggle -->
+          <div class="segmented-control">
+            <button id="btn-mode-mesh" class="btn btn-primary seg-btn" title="3D Volumetric Mesh">
+              <i class="fa-solid fa-cubes"></i> <span>Mesh</span>
+            </button>
+            <button id="btn-mode-lidar" class="btn btn-secondary seg-btn" title="LiDAR Point Cloud">
+              <i class="fa-solid fa-braille"></i> <span>LiDAR</span>
+            </button>
+            <button id="btn-mode-cesium" class="btn btn-secondary seg-btn" title="Cesium 3D Globe">
+              <i class="fa-solid fa-globe"></i> <span>Globe</span>
+            </button>
+          </div>
+
+          <!-- Action Tool Buttons -->
+          <div class="viewport-action-tools">
+            <button id="btn-autorotate-3d" class="btn btn-secondary tool-btn" title="Rotate Freely 360 Degrees">
+              <i class="fa-solid fa-arrows-rotate"></i> <span>Orbit</span>
+            </button>
+            <button id="btn-reset-cam" class="btn btn-secondary tool-btn" title="Reset Camera View">
+              <i class="fa-solid fa-crosshairs"></i>
+            </button>
           </div>
         </div>
-        <div id="map2d" class="map-container"></div>
       </div>
 
-      <!-- 3D Volumetric Digital Twin Viewport -->
-      <div class="viewport-panel">
-        <div class="viewport-header">
-          <div class="viewport-badge" style="border-color: #8b5cf6;">
-            <span class="badge-dot" style="background: #8b5cf6; box-shadow: 0 0 8px #8b5cf6;"></span> 3D Digital Twin & LiDAR
-          </div>
-        </div>
-
-        <div class="viewport-tools">
-          <button id="btn-mode-mesh" class="btn btn-primary" style="padding: 6px 12px; font-size: 11px;">
-            <i class="fa-solid fa-cubes"></i> 3D Mesh
-          </button>
-          <button id="btn-mode-lidar" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
-            <i class="fa-solid fa-braille"></i> LiDAR Cloud
-          </button>
-          <button id="btn-mode-cesium" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
-            <i class="fa-solid fa-globe"></i> Cesium 3D Globe
-          </button>
-          <button id="btn-autorotate-3d" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" title="Rotate Freely 360 Degrees">
-            <i class="fa-solid fa-arrows-rotate"></i> 360° Orbit
-          </button>
-          <button id="btn-reset-cam" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px;" title="Reset Camera">
-            <i class="fa-solid fa-crosshairs"></i>
-          </button>
-        </div>
-
+      <!-- 3D Render Canvas Stage -->
+      <div class="viewport-stage">
         <canvas id="view3d-canvas"></canvas>
         <div id="cesium-container" style="display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 10;"></div>
 
@@ -177,11 +210,15 @@
           <div class="hud-item"><i class="fa-solid fa-hand-pointer" style="color: #f59e0b;"></i> Click floor to slice</div>
         </div>
       </div>
+    </section>
 
+    <!-- Resizer Gutter 2 (Between 3D Viewport & Inspector Panel) -->
+    <div class="split-gutter" id="gutter-2" title="Drag to resize 3D View and Inspector (Double click to reset)">
+      <div class="gutter-handle"></div>
     </div>
 
-    <!-- Right Side Inspector Panel -->
-    <aside class="inspector-panel">
+    <!-- Pane 3: Right Side Inspector Dossier -->
+    <aside class="inspector-panel" id="pane-inspector">
       <div class="inspector-header">
         <div class="inspector-title">
           <i class="fa-solid fa-fingerprint" style="color: #00f2fe;"></i> Parcel & 3D Unit Dossier
@@ -192,7 +229,7 @@
       <div class="inspector-body">
         
         <!-- Dual 2D & 3D ULPIN Badges -->
-        <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px;">
           <div class="ulpin-badge" style="background: linear-gradient(135deg, rgba(0, 242, 254, 0.12), rgba(15, 23, 42, 0.8)); border-color: rgba(0, 242, 254, 0.4);">
             <div id="inspector-2d-ulpin" class="ulpin-code" style="color: #00f2fe;">832454DYJFAQY2</div>
             <div class="ulpin-desc" style="color: #94a3b8;">2D Cadastral Base ULPIN (14 Chars)</div>
@@ -203,7 +240,6 @@
             <div id="inspector-3d-ulpin-desc" class="ulpin-desc" style="color: #cbd5e1;">3D Volumetric ULPIN (18 Chars = 14 Base + 4 Level)</div>
           </div>
         </div>
-
 
         <!-- Cadastral Attributes -->
         <div class="card">
@@ -293,7 +329,149 @@
     </aside>
   </main>
 
-  <!-- Modal: Interactive 3D ULPIN Calculator & Decoder -->
+  <!-- ================= Modal: Municipal Officer Authentication ================= -->
+  <div id="officer-login-modal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-user-shield" style="color: #00f2fe;"></i> Municipal Officer Authentication</h3>
+        <button id="btn-close-officer-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="auth-badge-box">
+          <div class="auth-badge-icon">
+            <i class="fa-solid fa-building-columns"></i>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 13px; color: #fff;">GHMC & ULB Cadastral Verification Portal</div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 2px;">Authorized for LiDAR Point Cloud (.laz) & Architectural Floor Plan Ingestion</div>
+          </div>
+        </div>
+
+        <div id="officer-login-status" style="font-size: 12px; color: #94a3b8; line-height: 1.4;">
+          Please provide your official Town Planning ID and Department to upload drone survey data.
+        </div>
+
+        <form id="officer-login-form" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="input-officer-id"><i class="fa-solid fa-id-badge"></i> Officer ID</label>
+              <input type="text" id="input-officer-id" class="form-input" placeholder="e.g. GHMC-TP-4092" value="GHMC-TP-4092" required>
+            </div>
+            <div class="form-group">
+              <label for="input-officer-name"><i class="fa-solid fa-user"></i> Full Name</label>
+              <input type="text" id="input-officer-name" class="form-input" placeholder="e.g. Srikanth Rao" value="Srikanth Rao (Town Planner)" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="input-officer-dept"><i class="fa-solid fa-sitemap"></i> Department / ULB Wing</label>
+            <input type="text" id="input-officer-dept" class="form-input" value="GHMC Town Planning Wing" required>
+          </div>
+
+          <div class="form-group">
+            <label for="input-officer-pin"><i class="fa-solid fa-key"></i> Security PIN / OTP</label>
+            <input type="password" id="input-officer-pin" class="form-input" value="849204" required>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+            <button type="button" id="btn-fill-demo-officer" class="demo-credentials-pill">
+              <i class="fa-solid fa-bolt"></i> Use Demo GHMC Credentials
+            </button>
+            <button type="submit" class="btn btn-primary" style="padding: 9px 20px;">
+              <i class="fa-solid fa-unlock-keyhole"></i> Authenticate & Unlock Portal
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= Modal: Ward Portal Upload & 3D Ingestion ================= -->
+  <div id="ingest-modal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-cloud-arrow-up" style="color: #10b981;"></i> Ward Portal Ingestion Engine</h3>
+        <button id="btn-close-ingest-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Tab Selector: Branch A (LiDAR Available) vs Branch B (No LiDAR Available) -->
+        <div style="display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-glass); padding-bottom: 12px;">
+          <button id="tab-branch-lidar" class="btn btn-primary" style="flex: 1; justify-content: center; font-size: 12px;">
+            <i class="fa-solid fa-plane-up"></i> Branch A: Drone / LiDAR Available (.laz + Ortho)
+          </button>
+          <button id="tab-branch-floorplan" class="btn btn-secondary" style="flex: 1; justify-content: center; font-size: 12px;">
+            <i class="fa-solid fa-file-pdf"></i> Branch B: No LiDAR (Floor Plan + OpenTopography)
+          </button>
+        </div>
+
+        <!-- Branch A Form (LiDAR / Drone Surveyed) -->
+        <div id="form-branch-lidar">
+          <div style="background: rgba(0, 242, 254, 0.06); border: 1px dashed rgba(0, 242, 254, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
+            <i class="fa-solid fa-cloud-arrow-up" style="font-size: 32px; color: #00f2fe; margin-bottom: 8px;"></i>
+            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Drone LiDAR (.laz/.las) or High-Res Orthophoto</div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Evaluates building height, nDSM ground profile, and vertical floor slices with 18-char 3D ULPINs</div>
+            <input type="file" id="input-lidar-file" accept=".laz,.las,.tif,.tiff,.png,.jpg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
+          </div>
+          <button id="btn-run-lidar-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center;">
+            <i class="fa-solid fa-bolt"></i> Process LiDAR nDSM & Extract Facade Floor Slices
+          </button>
+        </div>
+
+        <!-- Branch B Form (No LiDAR: Floor Plan PDF + OpenTopography DEM) -->
+        <div id="form-branch-floorplan" style="display: none;">
+          <div class="form-row" style="margin-bottom: 12px;">
+            <div class="form-group">
+              <label><i class="fa-solid fa-mountain"></i> Baseline Ground Elevation Source</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="input-opentopo-source" class="form-input" value="Copernicus 30m (OpenTopography API)" readonly style="background: rgba(15, 23, 42, 0.8);">
+                <button id="btn-fetch-opentopo" class="btn btn-secondary" style="padding: 0 12px; font-size: 11px;">
+                  <i class="fa-solid fa-sync"></i> Fetch DEM
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Calculated Ground (Z_base)</label>
+              <input type="text" id="input-dem-value" class="form-input" value="512.4 m MSL" readonly>
+            </div>
+          </div>
+
+          <div style="background: rgba(16, 185, 129, 0.06); border: 1px dashed rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
+            <i class="fa-solid fa-file-pdf" style="font-size: 32px; color: #10b981; margin-bottom: 8px;"></i>
+            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Architectural Floor Plan (PDF / Image)</div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">AI/ML Vectorization of rooms, apartments, and 18-char 3D sub-unit identities</div>
+            <input type="file" id="input-floorplan-file" accept=".pdf,.png,.jpg,.jpeg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
+          </div>
+
+          <div class="form-row" style="margin-bottom: 14px;">
+            <div class="form-group">
+              <label>Floor Number</label>
+              <input type="number" id="input-floor-idx" class="form-input" value="1" min="0" max="50">
+            </div>
+            <div class="form-group">
+              <label>Total Building Levels</label>
+              <input type="number" id="input-total-levels" class="form-input" value="5" min="1" max="50">
+            </div>
+            <div class="form-group">
+              <label>Floor Height (m)</label>
+              <input type="number" id="input-floor-height" class="form-input" value="3.2" step="0.1" min="2.4" max="5.0">
+            </div>
+          </div>
+
+          <button id="btn-run-floorplan-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #10b981, #059669); border-color: #10b981;">
+            <i class="fa-solid fa-vector-square"></i> Vectorize Floor Plan & Extrude 3D Units
+          </button>
+        </div>
+
+        <!-- Ingestion Pipeline Live Log Output -->
+        <div id="ingest-log-box" style="margin-top: 14px; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--border-glass); border-radius: 6px; padding: 10px; font-family: var(--font-mono); font-size: 11px; color: #a5f3fc; max-height: 140px; overflow-y: auto; display: none;">
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= Modal: 3D ULPIN Engine & Decoder ================= -->
   <div id="ulpin-modal" class="modal-overlay">
     <div class="modal-container">
       <div class="modal-header">
@@ -341,101 +519,18 @@
     </div>
   </div>
 
-  <!-- Modal: Ward Portal Upload & 3D Cadastral Ingestion -->
-  <div id="ingest-modal" class="modal-overlay">
-    <div class="modal-container" style="max-width: 680px;">
-      <div class="modal-header">
-        <h3><i class="fa-solid fa-cloud-arrow-up" style="color: #10b981;"></i> Ward Portal Ingestion Engine</h3>
-        <button id="btn-close-ingest-modal" class="modal-close-btn">&times;</button>
-      </div>
-      <div class="modal-body">
-        
-        <!-- Tab Selector: Branch A vs Branch B -->
-        <div style="display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-glass); padding-bottom: 12px;">
-          <button id="tab-branch-lidar" class="btn btn-primary" style="flex: 1; justify-content: center; font-size: 12px;">
-            <i class="fa-solid fa-plane-up"></i> Branch A: Drone / LiDAR (.laz + Ortho)
-          </button>
-          <button id="tab-branch-floorplan" class="btn btn-secondary" style="flex: 1; justify-content: center; font-size: 12px;">
-            <i class="fa-solid fa-file-pdf"></i> Branch B: No LiDAR (Floor Plan + DEM)
-          </button>
-        </div>
-
-        <!-- Branch A Form (LiDAR / Drone) -->
-        <div id="form-branch-lidar">
-          <div style="background: rgba(0, 242, 254, 0.06); border: 1px dashed rgba(0, 242, 254, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
-            <i class="fa-solid fa-cloud-arrow-up" style="font-size: 32px; color: #00f2fe; margin-bottom: 8px;"></i>
-            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Drone LiDAR (.laz/.las) or High-Res Orthophoto</div>
-            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Processed at 2–5 cm CORS-corrected accuracy in UTM Zone 44N</div>
-            <input type="file" id="input-lidar-file" accept=".laz,.las,.tif,.tiff,.png,.jpg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
-          </div>
-          <button id="btn-run-lidar-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center;">
-            <i class="fa-solid fa-bolt"></i> Process LiDAR nDSM & Extract Facade Floor Slices
-          </button>
-        </div>
-
-        <!-- Branch B Form (No LiDAR: Floor Plan PDF + OpenTopography) -->
-        <div id="form-branch-floorplan" style="display: none;">
-          <div class="form-row" style="margin-bottom: 12px;">
-            <div class="form-group">
-              <label><i class="fa-solid fa-mountain"></i> Baseline Elevation Source</label>
-              <div style="display: flex; gap: 8px;">
-                <input type="text" id="input-opentopo-source" class="form-input" value="Copernicus 30m (OpenTopography API)" readonly style="background: rgba(15, 23, 42, 0.8);">
-                <button id="btn-fetch-opentopo" class="btn btn-secondary" style="padding: 0 12px; font-size: 11px;">
-                  <i class="fa-solid fa-sync"></i> Fetch DEM
-                </button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label>Calculated Ground (Z_base)</label>
-              <input type="text" id="input-dem-value" class="form-input" value="512.4 m MSL" readonly>
-            </div>
-          </div>
-
-          <div style="background: rgba(16, 185, 129, 0.06); border: 1px dashed rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
-            <i class="fa-solid fa-file-pdf" style="font-size: 32px; color: #10b981; margin-bottom: 8px;"></i>
-            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Architectural Floor Plan (PDF / Image)</div>
-            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Vectorizes room partitions, corridors, and 18-char flat identities</div>
-            <input type="file" id="input-floorplan-file" accept=".pdf,.png,.jpg,.jpeg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
-          </div>
-
-          <div class="form-row" style="margin-bottom: 14px;">
-            <div class="form-group">
-              <label>Floor Number</label>
-              <input type="number" id="input-floor-idx" class="form-input" value="1" min="0" max="50">
-            </div>
-            <div class="form-group">
-              <label>Total Building Levels</label>
-              <input type="number" id="input-total-levels" class="form-input" value="5" min="1" max="50">
-            </div>
-            <div class="form-group">
-              <label>Floor Height (m)</label>
-              <input type="number" id="input-floor-height" class="form-input" value="3.2" step="0.1" min="2.4" max="5.0">
-            </div>
-          </div>
-
-          <button id="btn-run-floorplan-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #10b981, #059669); border-color: #10b981;">
-            <i class="fa-solid fa-vector-square"></i> Vectorize Floor Plan & Extrude 3D Units
-          </button>
-        </div>
-
-        <!-- Ingestion Pipeline Live Log Output -->
-        <div id="ingest-log-box" style="margin-top: 14px; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--border-glass); border-radius: 6px; padding: 10px; font-family: var(--font-mono); font-size: 11px; color: #a5f3fc; max-height: 140px; overflow-y: auto; display: none;">
-        </div>
-
-      </div>
-    </div>
-  </div>
-
   <!-- Core JS Libraries -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
-  <!-- Application Modules -->
+  <!-- Application Modules & Components -->
   <script src="/static/js/map2d.js"></script>
   <script src="/static/js/viewer3d.js"></script>
   <script src="/static/js/cesium_viewer.js"></script>
   <script src="/static/js/ulpin_tools.js"></script>
+  <script src="/static/js/components/resizer.js"></script>
+  <script src="/static/js/components/officer_auth.js"></script>
   <script src="/static/js/app.js"></script>
 
 </body>
