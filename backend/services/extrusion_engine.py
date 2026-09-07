@@ -12,7 +12,7 @@ Concepts:
 """
 
 import math
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 from shapely.geometry import Polygon, MultiPolygon
 import numpy as np
 
@@ -20,7 +20,8 @@ from backend.services.spatial_service import (
     to_utm,
     to_wgs84,
     get_centroid_wgs84,
-    calculate_metric_area
+    calculate_metric_area,
+    geojson_to_shapely
 )
 from backend.services.ulpin_generator import generate_prototype_ulpin
 
@@ -219,7 +220,7 @@ def generate_3d_mesh(
 
 
 def extrude_parcel_and_buildings(
-    parcel_wgs84: Polygon,
+    parcel_wgs84: Union[Polygon, Dict[str, Any]],
     buildings_wgs84: List[Dict[str, Any]],
     parcel_ulpin: str,
     parcel_id: str,
@@ -229,6 +230,9 @@ def extrude_parcel_and_buildings(
     """
     Extrude parcel terrain base and building structures with multi-story floor slicing.
     """
+    if isinstance(parcel_wgs84, dict):
+        parcel_wgs84 = geojson_to_shapely(parcel_wgs84)
+
     centroid_lat, centroid_lon = get_centroid_wgs84(parcel_wgs84)
     base_elevation = estimate_terrain_elevation(centroid_lat, centroid_lon)
     parcel_area = calculate_metric_area(parcel_wgs84)
@@ -242,6 +246,9 @@ def extrude_parcel_and_buildings(
     
     for b_idx, b_info in enumerate(buildings_wgs84):
         b_poly_wgs84 = b_info["geometry"]
+        if isinstance(b_poly_wgs84, dict):
+            b_poly_wgs84 = geojson_to_shapely(b_poly_wgs84)
+            
         floors_count = b_info.get("floors", 3)
         floor_height = b_info.get("floor_height", 3.2)
         total_height = floors_count * floor_height

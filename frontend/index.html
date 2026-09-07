@@ -18,6 +18,9 @@
   
   <!-- Custom CSS -->
   <link rel="stylesheet" href="/static/css/styles.css">
+  
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏢</text></svg>">
 </head>
 <body>
 
@@ -34,10 +37,26 @@
     </div>
 
     <div class="nav-controls">
+      <!-- State Selector -->
+      <div class="ward-selector-group">
+        <label for="state-select"><i class="fa-solid fa-flag"></i> State:</label>
+        <select id="state-select" class="styled-select" style="min-width: 120px;">
+          <option value="TS">Telangana</option>
+        </select>
+      </div>
+
+      <!-- City/ULB Selector -->
+      <div class="ward-selector-group">
+        <label for="city-select"><i class="fa-solid fa-city"></i> City:</label>
+        <select id="city-select" class="styled-select" style="min-width: 150px;">
+          <option value="TS-HYD">Hyderabad (GHMC)</option>
+        </select>
+      </div>
+
       <!-- Ward Selector -->
       <div class="ward-selector-group">
         <label for="ward-select"><i class="fa-solid fa-map-location-dot"></i> Ward:</label>
-        <select id="ward-select" class="styled-select">
+        <select id="ward-select" class="styled-select" style="min-width: 180px;">
           <option value="1">Loading wards...</option>
         </select>
       </div>
@@ -50,6 +69,13 @@
           <option value="osm">OpenStreetMap (Live Query)</option>
         </select>
 
+      </div>
+
+      <div class="ward-selector-group">
+        <label><i class="fa-solid fa-database"></i> DB Cache:</label>
+        <span class="badge" style="background: rgba(0, 242, 254, 0.12); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.3); padding: 5px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap;">
+          50 in DB
+        </span>
       </div>
 
       <!-- Search Input -->
@@ -124,6 +150,9 @@
           <button id="btn-mode-lidar" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
             <i class="fa-solid fa-braille"></i> LiDAR Cloud
           </button>
+          <button id="btn-autorotate-3d" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" title="Rotate Freely 360 Degrees">
+            <i class="fa-solid fa-arrows-rotate"></i> 360° Orbit
+          </button>
           <button id="btn-reset-cam" class="btn btn-secondary" style="padding: 6px 10px; font-size: 11px;" title="Reset Camera">
             <i class="fa-solid fa-crosshairs"></i>
           </button>
@@ -132,7 +161,7 @@
         <canvas id="view3d-canvas"></canvas>
 
         <div class="view3d-hud">
-          <div class="hud-item"><i class="fa-solid fa-arrows-up-down-left-right" style="color: #00f2fe;"></i> Rotate / Orbit</div>
+          <div class="hud-item"><i class="fa-solid fa-arrows-rotate" style="color: #00f2fe;"></i> Free 360° Orbit</div>
           <div class="hud-item"><i class="fa-solid fa-magnifying-glass-plus" style="color: #10b981;"></i> Scroll to Zoom</div>
           <div class="hud-item"><i class="fa-solid fa-hand-pointer" style="color: #f59e0b;"></i> Click floor to slice</div>
         </div>

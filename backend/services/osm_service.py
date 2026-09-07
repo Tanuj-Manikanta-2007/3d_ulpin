@@ -21,15 +21,20 @@ from backend.services.spatial_service import (
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter"
 ]
 
 
+<<<<<<< HEAD
 def query_overpass(query_str: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
     """Execute Overpass QL query with 5.0s timeout and automatic endpoint failover."""
+=======
+def query_overpass(query_str: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
+    """Execute Overpass QL query with rapid timeout and automatic fallback across endpoints."""
+>>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     headers = {
-        "User-Agent": "3D-ULPIN-Cadastral-Engine/1.0 (Hyderabad-Digital-Twin)"
+        "User-Agent": "3D-ULPIN-Cadastral-Engine/2.0 (Hyderabad-Digital-Twin)",
+        "Accept": "application/json"
     }
     
     for endpoint in OVERPASS_ENDPOINTS:
@@ -42,11 +47,45 @@ def query_overpass(query_str: str, timeout: float = 5.0) -> Optional[Dict[str, A
             )
             if resp.status_code == 200:
                 return resp.json()
+<<<<<<< HEAD
         except Exception:
+=======
+            else:
+                print(f"[OSM Overpass] Endpoint {endpoint} returned status {resp.status_code}")
+        except Exception as e:
+            print(f"[OSM Overpass] Endpoint {endpoint} failed or timed out: {e}")
+>>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
             continue
+    print("[OSM Overpass] All Overpass endpoints busy or rate-limited; falling back to synthetic cadastre.")
     return None
 
 
+<<<<<<< HEAD
+=======
+def get_osm_building_count_in_bbox(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float
+) -> int:
+    """Execute a rapid Overpass count query to get the total number of real buildings across the ward bounding box."""
+    query = f"""
+    [out:json][timeout:15];
+    (
+      way["building"]({min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f});
+    );
+    out count;
+    """
+    data = query_overpass(query, timeout=8)
+    if data and "elements" in data and data["elements"]:
+        tags = data["elements"][0].get("tags", {})
+        count_val = int(tags.get("ways", tags.get("total", 0)))
+        if count_val > 0:
+            print(f"[OSM Overpass] Total buildings detected across ward bbox: {count_val}")
+            return count_val
+    return 0
+
+>>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
 def fetch_osm_buildings_in_bbox(
     min_lon: float,
@@ -56,29 +95,39 @@ def fetch_osm_buildings_in_bbox(
     max_buildings: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
-    Query Overpass API for real building footprints within a bounding box.
+    Query Overpass API for real building footprints across the full bounding box.
+    Uses 'out geom qt' to evenly sample buildings across the quadtree of the entire ward.
     Returns geometries in standard WGS84 [lon, lat] coordinate format.
     """
-    # Overpass QL syntax uses: (min_lat, min_lon, max_lat, max_lon)
+    limit_str = f" {max_buildings}" if max_buildings else ""
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:45];
     (
       way["building"]({min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f});
-      relation["building"]["type"="multipolygon"]({min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f});
     );
-    out body;
-    >;
-    out skel qt;
+    out geom{limit_str} qt;
     """
 
-    data = query_overpass(query)
+    data = query_overpass(query, timeout=30)
     if not data:
-        print("[OSM Service] No data returned from Overpass API")
-        return []
+        # Fallback to standard body query if geom is not supported
+        fallback_query = f"""
+        [out:json][timeout:45];
+        (
+          way["building"]({min_lat:.6f},{min_lon:.6f},{max_lat:.6f},{max_lon:.6f});
+        );
+        out body{limit_str};
+        >;
+        out skel qt;
+        """
+        data = query_overpass(fallback_query, timeout=25)
+        if not data:
+            print("[OSM Service] No data returned from Overpass API")
+            return []
 
     elements = data.get("elements", [])
     
-    # 1. Index all nodes by ID: id -> (lon, lat)
+    # 1. Index nodes if present (for fallback format)
     nodes = {}
     for el in elements:
         if el.get("type") == "node":
@@ -88,14 +137,17 @@ def fetch_osm_buildings_in_bbox(
     buildings = []
     for el in elements:
         if el.get("type") == "way" and "building" in el.get("tags", {}):
-            node_ids = el.get("nodes", [])
-            if len(node_ids) < 4:
-                continue
-
             coords = []
-            for nid in node_ids:
-                if nid in nodes:
-                    coords.append(nodes[nid])  # (lon, lat)
+            
+            # Format A: geometry coordinates embedded directly via 'out geom'
+            if "geometry" in el and isinstance(el["geometry"], list) and len(el["geometry"]) >= 4:
+                coords = [(pt["lon"], pt["lat"]) for pt in el["geometry"]]
+            # Format B: node references via 'out body'
+            elif "nodes" in el:
+                node_ids = el.get("nodes", [])
+                for nid in node_ids:
+                    if nid in nodes:
+                        coords.append(nodes[nid])
 
             if len(coords) >= 4:
                 try:
@@ -160,5 +212,6 @@ def fetch_osm_buildings_in_bbox(
                 except Exception:
                     continue
 
-    print(f"[OSM Service] Successfully parsed {len(buildings)} real OSM building footprints.")
+    print(f"[OSM Service] Successfully parsed {len(buildings)} real OSM building footprints across ward.")
     return buildings
+
