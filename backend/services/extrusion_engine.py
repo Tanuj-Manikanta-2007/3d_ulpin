@@ -12,7 +12,7 @@ Concepts:
 """
 
 import math
-from typing import List, Dict, Any, Tuple, Union
+from typing import List, Dict, Any, Tuple, Union, Optional
 from shapely.geometry import Polygon, MultiPolygon
 import numpy as np
 
@@ -226,16 +226,18 @@ def extrude_parcel_and_buildings(
     parcel_ulpin: str,
     parcel_id: str,
     land_use: str = "Residential",
-    owner_name: str = "Unknown"
+    owner_name: str = "Unknown",
+    base_elevation_override: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Extrude parcel terrain base and building structures with multi-story floor slicing.
+    Supports LiDAR-evaluated base ground elevation and nDSM height overrides.
     """
     if isinstance(parcel_wgs84, dict):
         parcel_wgs84 = geojson_to_shapely(parcel_wgs84)
 
     centroid_lat, centroid_lon = get_centroid_wgs84(parcel_wgs84)
-    base_elevation = estimate_terrain_elevation(centroid_lat, centroid_lon)
+    base_elevation = base_elevation_override if base_elevation_override is not None else estimate_terrain_elevation(centroid_lat, centroid_lon)
     parcel_area = calculate_metric_area(parcel_wgs84)
     parcel_utm = to_utm(parcel_wgs84)
     
@@ -252,7 +254,9 @@ def extrude_parcel_and_buildings(
             
         floors_count = b_info.get("floors", 3)
         floor_height = b_info.get("floor_height", 3.2)
-        total_height = floors_count * floor_height
+        total_height = float(b_info.get("height_m") or (floors_count * floor_height))
+        if floors_count > 0:
+            floor_height = round(total_height / floors_count, 2)
         roof_elevation = base_elevation + total_height
         
         if total_height > max_height:

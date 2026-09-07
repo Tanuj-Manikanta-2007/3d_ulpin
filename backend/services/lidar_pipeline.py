@@ -41,11 +41,93 @@ class LiDARProcessor:
     def __init__(self, target_epsg: str = "EPSG:32644"):
         self.target_epsg = target_epsg
 
-    def parse_point_cloud(self, file_bytes: bytes, filename: str = "scan.laz") -> Dict[str, Any]:
+    def parse_point_cloud(
+        self,
+        file_bytes: bytes,
+        filename: str = "scan.laz",
+        base_utm_x: float = 232920.0,
+        base_utm_y: float = 1923850.0,
+        base_ground_msl: float = 512.5
+    ) -> Dict[str, Any]:
         """
-        Parse .laz or .las bytes into structured XYZ coordinates, intensity, and classification.
-        Provides robust fallback if laspy is not installed or if file is binary sample.
+        Parse .laz, .las, or .pcd bytes into structured XYZ coordinates, intensity, and classification.
+        Supports standard ASPRS classifications and provides robust fallback if laspy is not installed.
         """
+        fname_lower = filename.lower()
+        parse_error = None
+        if (fname_lower.endswith(".pcd") or file_bytes.startswith(b"# .PCD")) and len(file_bytes) > 0:
+            try:
+                text = file_bytes.decode('utf-8', errors='ignore')
+                lines = text.splitlines()
+                header = True
+                pts_x, pts_y, pts_z = [], [], []
+                intensities, classifications = [], []
+                fields = []
+
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if header:
+                        if line.startswith("FIELDS"):
+                            fields = line.split()[1:]
+                        elif line.startswith("DATA"):
+                            header = False
+                        continue
+
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        px, py, pz = float(parts[0]), float(parts[1]), float(parts[2])
+                        cls_val = 2
+                        inten_val = 128
+
+                        if "classification" in fields:
+                            c_idx = fields.index("classification")
+                            if c_idx < len(parts):
+                                cls_val = int(float(parts[c_idx]))
+                        elif "rgb" in fields:
+                            r_idx = fields.index("rgb")
+                            if r_idx < len(parts):
+                                rgb_val = int(float(parts[r_idx]))
+                                r = (rgb_val >> 16) & 0xFF
+                                g = (rgb_val >> 8) & 0xFF
+                                if rgb_val == 4294901760 or r > g:
+                                    cls_val = 2
+                                else:
+                                    cls_val = 6 if pz > 1.0 else 7
+
+                        pts_x.append(px)
+                        pts_y.append(py)
+                        pts_z.append(pz)
+                        intensities.append(inten_val)
+                        classifications.append(cls_val)
+
+                if len(pts_x) > 0:
+                    px_arr = np.array(pts_x, dtype=np.float64)
+                    py_arr = np.array(pts_y, dtype=np.float64)
+                    pz_arr = np.array(pts_z, dtype=np.float64)
+
+                    # Georeference to Gachibowli if relative scanner coordinates
+                    if abs(px_arr.mean()) < 5000.0 or abs(py_arr.mean()) < 5000.0:
+                        px_arr = px_arr + base_utm_x
+                        py_arr = py_arr + base_utm_y
+                        pz_arr = pz_arr - pz_arr.min() + base_ground_msl
+
+                    return {
+                        "status": "success",
+                        "data_source": "real_lidar",
+                        "point_count": len(px_arr),
+                        "x": px_arr,
+                        "y": py_arr,
+                        "z": pz_arr,
+                        "intensity": np.array(intensities, dtype=np.uint16),
+                        "classification": np.array(classifications, dtype=np.uint8),
+                        "bounds": [float(px_arr.min()), float(py_arr.min()), float(pz_arr.min()),
+                                   float(px_arr.max()), float(py_arr.max()), float(pz_arr.max())]
+                    }
+            except Exception as e:
+                print(f"[LiDAR] Warning: PCD parse error: {e}. Falling back to standard parser.")
+
         if LASPY_AVAILABLE and len(file_bytes) > 0:
             try:
                 with io.BytesIO(file_bytes) as in_stream:
@@ -57,6 +139,7 @@ class LiDARProcessor:
                     classification = np.array(las.classification) if hasattr(las, "classification") else np.zeros_like(z, dtype=int)
                     return {
                         "status": "success",
+                        "data_source": "real_lidar",
                         "point_count": len(x),
                         "x": x,
                         "y": y,
@@ -67,10 +150,14 @@ class LiDARProcessor:
                                    float(x.max()), float(y.max()), float(z.max())]
                     }
             except Exception as e:
+                parse_error = str(e)
                 print(f"[LiDAR] Warning: laspy parse error: {e}. Falling back to synthetic scanner.")
 
         # Synthetic point cloud simulation (e.g. for testing or mock uploads)
-        return self._generate_synthetic_point_cloud()
+        synthetic = self._generate_synthetic_point_cloud()
+        synthetic["data_source"] = "synthetic_fallback"
+        synthetic["fallback_reason"] = parse_error or "No LiDAR data was supplied."
+        return synthetic
 
     def _generate_synthetic_point_cloud(
         self,

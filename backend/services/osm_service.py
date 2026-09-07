@@ -4,6 +4,7 @@ Fetches real-world OpenStreetMap (OSM) building footprints and road networks
 for any selected Hyderabad ward boundary using the Overpass API.
 """
 
+import os
 import requests
 import json
 from typing import List, Dict, Any, Optional, Tuple
@@ -15,14 +16,24 @@ from backend.services.spatial_service import (
     validate_and_fix_polygon,
     calculate_metric_area,
     get_centroid_wgs84,
-    shapely_to_geojson
+    shapely_to_geojson,
+    geojson_to_shapely
 )
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter"
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter"
 ]
+
+OSM_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "osm_cache")
+os.makedirs(OSM_CACHE_DIR, exist_ok=True)
+
+
+def _get_cache_key(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> str:
+    return f"{min_lon:.4f}_{min_lat:.4f}_{max_lon:.4f}_{max_lat:.4f}".replace("-", "m").replace(".", "_")
 
 
 def query_overpass(query_str: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
@@ -84,9 +95,29 @@ def fetch_osm_buildings_in_bbox(
 ) -> List[Dict[str, Any]]:
     """
     Query Overpass API for real building footprints across the full bounding box.
+    Uses persistent disk caching to avoid hitting Overpass rate limits (429).
     Uses 'out geom qt' to evenly sample buildings across the quadtree of the entire ward.
     Returns geometries in standard WGS84 [lon, lat] coordinate format.
     """
+    cache_key = _get_cache_key(min_lon, min_lat, max_lon, max_lat)
+    cache_file = os.path.join(OSM_CACHE_DIR, f"osm_{cache_key}.json")
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+            buildings = []
+            for b in cached_data:
+                poly = geojson_to_shapely(b["geometry"])
+                b_copy = dict(b)
+                b_copy["geometry"] = poly
+                buildings.append(b_copy)
+            if max_buildings:
+                buildings = buildings[:max_buildings]
+            print(f"[OSM Service] Loaded {len(buildings)} building footprints from persistent disk cache ({cache_key}).")
+            return buildings
+        except Exception as e:
+            print(f"[OSM Service] Failed reading disk cache: {e}")
+
     limit_str = f" {max_buildings}" if max_buildings else ""
     query = f"""
     [out:json][timeout:45];
@@ -110,6 +141,23 @@ def fetch_osm_buildings_in_bbox(
         """
         data = query_overpass(fallback_query, timeout=25)
         if not data:
+            # Check if ANY cached file exists in OSM_CACHE_DIR as emergency fallback
+            cached_files = [os.path.join(OSM_CACHE_DIR, f) for f in os.listdir(OSM_CACHE_DIR) if f.endswith(".json")]
+            if cached_files:
+                try:
+                    best_file = max(cached_files, key=os.path.getsize)
+                    with open(best_file, "r", encoding="utf-8") as f:
+                        cached_data = json.load(f)
+                    buildings = []
+                    for b in cached_data:
+                        poly = geojson_to_shapely(b["geometry"])
+                        b_copy = dict(b)
+                        b_copy["geometry"] = poly
+                        buildings.append(b_copy)
+                    print(f"[OSM Service] Overpass busy/429; recovered {len(buildings)} buildings from fallback cache {os.path.basename(best_file)}!")
+                    return buildings[:max_buildings] if max_buildings else buildings
+                except Exception:
+                    pass
             print("[OSM Service] No data returned from Overpass API")
             return []
 
@@ -201,5 +249,19 @@ def fetch_osm_buildings_in_bbox(
                     continue
 
     print(f"[OSM Service] Successfully parsed {len(buildings)} real OSM building footprints across ward.")
+    if buildings:
+        try:
+            serializable = []
+            for b in buildings:
+                b_copy = dict(b)
+                b_copy["geometry"] = shapely_to_geojson(b["geometry"])
+                serializable.append(b_copy)
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(serializable, f)
+            print(f"[OSM Service] Cached {len(serializable)} building footprints to disk cache ({cache_key}).")
+        except Exception as e:
+            print(f"[OSM Service] Failed writing disk cache: {e}")
+
     return buildings
+
 

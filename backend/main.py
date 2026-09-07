@@ -34,8 +34,10 @@ from backend.services.spatial_service import (
     validate_3d_cadastral_topology,
     geojson_to_shapely,
     get_bbox_wgs84,
-    shapely_to_geojson
+    shapely_to_geojson,
+    calculate_metric_area
 )
+from backend.services.extrusion_engine import extrude_parcel_and_buildings
 from backend.services.ai_extractor import extract_building_footprints_from_image
 from backend.services.lidar_pipeline import lidar_pipeline_instance
 from backend.services.floorplan_vectorizer import floorplan_vectorizer_instance
@@ -165,11 +167,22 @@ def get_ward(ward_id: str = Path(..., description="Ward ID")):
     return w
 
 
+@app.get("/api/wards/{ward_id}/lidar-status")
+def get_ward_lidar_status(ward_id: str = Path(..., description="Ward ID")):
+    """Check whether the ward has active Drone LiDAR survey data in the database."""
+    has_lidar = db_instance.has_ward_lidar(ward_id)
+    return {
+        "ward_id": ward_id,
+        "has_lidar": has_lidar,
+        "branch": "Branch_A_LiDAR_Drone" if has_lidar else "Branch_B_Standard_City_Ward"
+    }
+
+
 @app.post("/api/wards/{ward_id}/generate")
 def generate_ward_parcels(
     ward_id: str = Path(..., description="Ward ID"),
     count: Optional[int] = Query(None, description="Target number of parcels (defaults to all possible in ward)"),
-    source: str = Query("osm", description="Data source: 'osm' (Live OpenStreetMap) or 'synthetic' (Voronoi partitioning)")
+    source: str = Query("osm", description="Data source: 'osm' (Live OpenStreetMap), 'synthetic' (Voronoi partitioning), or 'lidar' (Drone LiDAR Survey)")
 ):
     """Generate all possible parcels in the ward location, storing 100 parcels directly into PostgreSQL / Database."""
     try:
@@ -180,6 +193,7 @@ def generate_ward_parcels(
             "message": f"Generated all {len(parcels)} parcels for Ward {ward_id} ({db_count} stored in database).",
             "ward_id": ward_id,
             "source": source,
+            "branch": "Branch_A_LiDAR_Drone" if source == "lidar" else "Branch_B_Standard_City_Ward",
             "total_generated": len(parcels),
             "stored_in_db": db_count,
             "total_detected": total_detected,
@@ -187,7 +201,7 @@ def generate_ward_parcels(
             "parcels": parcels
         }
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation error: {str(e)}")
 
@@ -388,28 +402,41 @@ def ai_extract_footprints(
 async def upload_drone_lidar(
     file: Optional[UploadFile] = File(None),
     parcel_id: Optional[str] = Query(None),
+    ward_id: Optional[str] = Query("1"),
     min_lon: float = Query(78.379),
     min_lat: float = Query(17.439),
     max_lon: float = Query(78.383),
     max_lat: float = Query(17.443)
 ):
     """
-    Branch A: Drone / LiDAR Upload (.laz/.las) + Orthophoto.
+    Branch A: Drone / LiDAR Upload (.laz/.las/.pcd) + Orthophoto.
     Executes nDSM generation, semantic point cloud segmentation, vertical floor slicing [Z_min, Z_max],
-    and regularized 2D building footprint extraction.
+    regularized 2D building footprint extraction, 3D volumetric extrusion, and database registration.
     """
     try:
         contents = await file.read() if file else b""
         filename = file.filename if file else "sample_flight.laz"
 
-        # 1. Parse point cloud (real laspy or CORS-corrected synthetic scan)
+        if len(contents) == 0:
+            default_laz = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "lidar", "gachibowli_ward105_drone_lidar.laz")
+            if os.path.exists(default_laz):
+                with open(default_laz, "rb") as f_def:
+                    contents = f_def.read()
+                filename = "gachibowli_ward105_drone_lidar.laz"
+
+        # 1. Parse point cloud (real laspy, PCD, or CORS-corrected scan)
         pc = lidar_pipeline_instance.parse_point_cloud(contents, filename)
 
         # 2. Segment into Ground, Roof, and Facades
         segmented = lidar_pipeline_instance.segment_point_cloud(pc)
+        ground_elevation_msl = segmented["ground_elevation_msl"]
+        building_height_m = segmented["ndsm_height_m"]
+        max_elevation_msl = segmented["max_elevation_msl"]
 
         # 3. Associate or derive Base ULPIN
         parcel = db_instance.get_parcel(parcel_id) if parcel_id else None
+        target_ward_id = parcel.get("ward_id", str(ward_id or "1")) if parcel else str(ward_id or "1")
+        target_pid = parcel_id if parcel_id else f"HYD-W{target_ward_id}-LIDAR001"
         base_ulpin = parcel["ulpin"] if parcel else generate_prototype_ulpin((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0, 0)
 
         # 4. Vertical Facade Floor Slicing
@@ -417,19 +444,88 @@ async def upload_drone_lidar(
 
         # 5. Regularized Building Footprint
         footprint = lidar_pipeline_instance.extract_regularized_footprint(pc, [min_lon, min_lat, max_lon, max_lat])
+        footprint_poly = geojson_to_shapely(footprint["geometry"])
+
+        # 6. Generate 3D Volumetric Extrusion from LiDAR elevations
+        parcel_poly = footprint_poly.buffer(0.00003)
+        bldg_spec = [{
+            "geometry": footprint_poly,
+            "floors": len(floors),
+            "height_m": building_height_m,
+            "floor_height": round(building_height_m / max(1, len(floors)), 2),
+            "name": f"Structure {target_pid} (LiDAR Drone)"
+        }]
+
+        extrusion_data = extrude_parcel_and_buildings(
+            parcel_wgs84=parcel_poly,
+            buildings_wgs84=bldg_spec,
+            parcel_ulpin=base_ulpin,
+            parcel_id=target_pid,
+            land_use="Commercial",
+            owner_name="IITH Drone Surveyed Parcel",
+            base_elevation_override=ground_elevation_msl
+        )
+
+        # 7. Extract authentic LiDAR point cloud samples for 3D viewer
+        origin_utm = extrusion_data.get("origin_utm", (232920.0, 1923850.0))
+        pts_x = pc["x"]
+        pts_y = pc["y"]
+        pts_z = pc["z"]
+        pts_cls = pc["classification"]
+        pts_int = pc["intensity"]
+
+        total_pts = len(pts_x)
+        sample_step = max(1, total_pts // 3500)
+        lidar_sample = []
+        for i in range(0, total_pts, sample_step):
+            lidar_sample.append({
+                "x": round(float(pts_x[i] - origin_utm[0]), 2),
+                "y": round(float(pts_z[i]), 2),
+                "z": round(float(pts_y[i] - origin_utm[1]), 2),
+                "classification": int(pts_cls[i]),
+                "intensity": int(pts_int[i])
+            })
+
+        # 8. Create full parcel record and persist to DB
+        parcel_record = {
+            "parcel_id": target_pid,
+            "ward_id": target_ward_id,
+            "ulpin": base_ulpin[:14],
+            "survey_number": parcel.get("survey_number", "Sy. 105/LiDAR-1") if parcel else "Sy. 105/LiDAR-1",
+            "land_use": "Commercial",
+            "owner_name": "IITH Drone Surveyed Parcel",
+            "area_sqm": round(calculate_metric_area(parcel_poly), 2),
+            "centroid": footprint["centroid"],
+            "geometry": shapely_to_geojson(parcel_poly),
+            "buildings_count": 1,
+            "floors_count": len(floors),
+            "data_source": "LIDAR_DRONE",
+            "elevation_source": "Drone LiDAR (nDSM Survey)",
+            "building_height_m": building_height_m,
+            "ground_elevation_msl": ground_elevation_msl,
+            "extrusion": extrusion_data
+        }
+
+        persisted_parcel = db_instance.save_custom_lidar_parcel(parcel_record, lidar_sample)
 
         return {
             "status": "success",
             "branch": "Branch_A_LiDAR_Drone",
             "filename": filename,
+            "processing_source": pc.get("data_source", "Drone LiDAR Ingestion"),
+            "fallback_reason": pc.get("fallback_reason"),
+            "parcel_id": target_pid,
+            "parcel": persisted_parcel,
             "points_processed": pc["point_count"],
-            "ground_elevation_msl": segmented["ground_elevation_msl"],
-            "max_elevation_msl": segmented["max_elevation_msl"],
-            "building_height_m": segmented["ndsm_height_m"],
+            "ground_elevation_msl": ground_elevation_msl,
+            "max_elevation_msl": max_elevation_msl,
+            "building_height_m": building_height_m,
             "floors_count": len(floors),
             "floors": floors,
             "footprint": footprint,
-            "base_ulpin": base_ulpin[:14]
+            "extrusion": extrusion_data,
+            "base_ulpin": base_ulpin[:14],
+            "message": f"Successfully generated 3D LiDAR parcel {target_pid} with {len(floors)} floors ({building_height_m}m height)!"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LiDAR processing error: {str(e)}")

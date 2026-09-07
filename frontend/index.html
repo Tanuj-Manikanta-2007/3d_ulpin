@@ -102,8 +102,9 @@
       <div class="filter-item ward-selector-group">
         <label for="source-select"><i class="fa-solid fa-satellite"></i> Mode:</label>
         <select id="source-select" class="styled-select">
-          <option value="synthetic" selected>Synthetic Cadastre (Instant)</option>
-          <option value="osm">OpenStreetMap (Live Query)</option>
+          <option value="osm" selected>OpenStreetMap (Live Cadastre)</option>
+          <option value="synthetic">Synthetic Cadastre (Instant)</option>
+          <option value="lidar" disabled>Drone LiDAR (Upload Required in Ward Portal)</option>
         </select>
       </div>
 
@@ -407,12 +408,34 @@
 
         <!-- Branch A Form (LiDAR / Drone Surveyed) -->
         <div id="form-branch-lidar">
-          <div style="background: rgba(0, 242, 254, 0.06); border: 1px dashed rgba(0, 242, 254, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
+          <div style="background: rgba(0, 242, 254, 0.06); border: 1px dashed rgba(0, 242, 254, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 12px;">
             <i class="fa-solid fa-cloud-arrow-up" style="font-size: 32px; color: #00f2fe; margin-bottom: 8px;"></i>
-            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Drone LiDAR (.laz/.las) or High-Res Orthophoto</div>
+            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Drone LiDAR (.laz / .las / .pcd) or High-Res Orthophoto</div>
             <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Evaluates building height, nDSM ground profile, and vertical floor slices with 18-char 3D ULPINs</div>
-            <input type="file" id="input-lidar-file" accept=".laz,.las,.tif,.tiff,.png,.jpg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
+            <input type="file" id="input-lidar-file" accept=".laz,.las,.pcd,.tif,.tiff,.png,.jpg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
           </div>
+
+          <!-- Quick Demo Dataset Card for Gachibowli Drone LiDAR (IITH WiNeT Source) -->
+          <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(0, 242, 254, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; gap: 10px;">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">IITH DATASET</span>
+                <span style="font-weight: 600; font-size: 12px; color: #f8fafc;">Gachibowli Drone Survey (Ward 105)</span>
+              </div>
+              <div style="font-size: 11px; color: #94a3b8;">
+                26,252 CORS points &bull; UTM Zone 44N &bull; 5 Floors &bull; Real IITH Terrain
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <a href="/static/sample_data/gachibowli_ward105_drone_lidar.laz" download class="btn btn-secondary" style="height: 28px; padding: 0 10px; font-size: 11px;" title="Download .laz file to computer">
+                <i class="fa-solid fa-download"></i> <span>Download</span>
+              </a>
+              <button type="button" id="btn-load-demo-lidar" class="btn btn-primary" style="height: 28px; padding: 0 12px; font-size: 11px;" title="Auto-load Gachibowli dataset into pipeline">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> <span>1-Click Load</span>
+              </button>
+            </div>
+          </div>
+
           <button id="btn-run-lidar-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center;">
             <i class="fa-solid fa-bolt"></i> Process LiDAR nDSM & Extract Facade Floor Slices
           </button>

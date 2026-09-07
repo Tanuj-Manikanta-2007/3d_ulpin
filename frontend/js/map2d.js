@@ -36,11 +36,9 @@ class Map2DController {
       preferCanvas: true
     }).setView([17.4400, 78.3800], 13);
 
-    // Free, reliable tile layers with zero API key required
-    const darkLayer = L.tileLayer('https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: 'CartoDB'
+    const darkLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 16,
+      attribution: 'Esri, HERE, Garmin, © OpenStreetMap contributors'
     });
 
     const osmLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {

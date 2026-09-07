@@ -71,6 +71,8 @@ class Ward(BaseModel):
     geometry: Dict[str, Any]
     bbox: List[float]
     parcels_count: int = 0
+    has_lidar: bool = False
+
 
 
 class ULPINEncodeRequest(BaseModel):

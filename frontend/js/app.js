@@ -164,6 +164,20 @@ class App {
       });
     }
 
+    // Data Source Mode dropdown change (Branch A LiDAR vs Branch B Standard OSM/Synthetic)
+    const sourceSelect = document.getElementById('source-select');
+    if (sourceSelect) {
+      sourceSelect.addEventListener('change', async (e) => {
+        const val = e.target.value;
+        if (val === 'lidar' && !this.currentWardHasLidar) {
+          alert(`Ward ${this.currentWardId} does not have Drone LiDAR data stored in the database yet.\n\nPlease open the Ward Portal and upload a .laz/.las drone scan (or 1-Click Load the authentic demo dataset) to activate Branch A (LiDAR Survey).`);
+          sourceSelect.value = 'osm';
+          return;
+        }
+        await this.loadWardData(this.currentWardId);
+      });
+    }
+
     // Generate Parcels button
     const generateBtn = document.getElementById('btn-generate-parcels');
     if (generateBtn) {
@@ -387,16 +401,46 @@ class App {
     await this.loadWards(cityId);
   }
 
+  updateSourceSelector(hasLidar, wardName = '') {
+    const sourceSelect = document.getElementById('source-select');
+    if (!sourceSelect) return;
+
+    let lidarOption = sourceSelect.querySelector('option[value="lidar"]');
+    if (!lidarOption) {
+      lidarOption = document.createElement('option');
+      lidarOption.value = 'lidar';
+      sourceSelect.appendChild(lidarOption);
+    }
+
+    if (hasLidar) {
+      lidarOption.disabled = false;
+      lidarOption.textContent = 'Drone LiDAR Survey (LiDAR Height)';
+      lidarOption.title = 'Branch A: Authentic Drone LiDAR nDSM with centimeter-accurate 3D building heights';
+      lidarOption.style.color = '#00f2fe';
+    } else {
+      lidarOption.disabled = true;
+      lidarOption.textContent = 'Drone LiDAR (Upload Required in Ward Portal)';
+      lidarOption.title = 'Branch B: No LiDAR uploaded for this ward. Upload .laz in Ward Portal to activate.';
+      lidarOption.style.color = '#64748b';
+      if (sourceSelect.value === 'lidar') {
+        sourceSelect.value = 'osm';
+      }
+    }
+  }
+
   async loadWardData(wardId) {
     try {
       this.renderEmptyInspector('<i class="fas fa-spinner fa-spin" style="color: #00f2fe; margin-right: 6px;"></i> Loading 3D Parcels from Database...');
 
-      // 1. Fetch Ward Geometry
+      // 1. Fetch Ward Geometry & LiDAR Availability
       const wardResp = await safeFetch(`/api/wards/${wardId}`);
       if (!wardResp.ok) {
         throw new Error(`Ward request failed (${wardResp.status})`);
       }
       const wardData = await wardResp.json();
+      this.currentWardName = wardData.name;
+      this.currentWardHasLidar = Boolean(wardData.has_lidar);
+      this.updateSourceSelector(this.currentWardHasLidar, wardData.name);
       this.map2d.setWard(wardData);
 
       // 2. Fetch Parcels in Ward (DB-First: returned immediately from DB if present, or generated via OSM & saved)
@@ -435,6 +479,11 @@ class App {
     const btn = document.getElementById('btn-generate-parcels');
     const sourceSelect = document.getElementById('source-select');
     const source = sourceSelect ? sourceSelect.value : 'osm';
+
+    if (source === 'lidar' && !this.currentWardHasLidar) {
+      alert(`Ward ${this.currentWardId} does not have Drone LiDAR data stored in the database.\n\nPlease click "Ward Portal" and upload a drone scan (.laz/.las) or 1-Click Load the authentic demo dataset to activate Branch A (Drone LiDAR Survey).`);
+      return;
+    }
 
     const origText = btn.innerHTML;
     btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Generating All Parcels (${source.toUpperCase()})...`;
@@ -832,6 +881,38 @@ class App {
       });
     }
 
+    // 1-Click Load Demo Gachibowli LiDAR Dataset
+    const btnLoadDemoLidar = document.getElementById('btn-load-demo-lidar');
+    if (btnLoadDemoLidar) {
+      btnLoadDemoLidar.addEventListener('click', async () => {
+        try {
+          btnLoadDemoLidar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading...';
+          const resp = await fetch('/static/sample_data/gachibowli_ward105_drone_lidar.laz');
+          if (!resp.ok) throw new Error('Could not fetch sample dataset');
+          const blob = await resp.blob();
+          const file = new File([blob], 'gachibowli_ward105_drone_lidar.laz', { type: 'application/octet-stream' });
+          
+          const fileInput = document.getElementById('input-lidar-file');
+          if (fileInput) {
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+          }
+          if (logBox) {
+            logBox.style.display = 'block';
+            logBox.innerHTML = '> Loaded authentic Gachibowli Drone LiDAR dataset (IIT Hyderabad WiNeT source).\n> 26,252 points in UTM EPSG:32644 ready for nDSM processing.\n';
+          }
+          btnLoadDemoLidar.innerHTML = '<i class="fa-solid fa-check" style="color: #10b981;"></i> <span>Loaded!</span>';
+          setTimeout(() => {
+            btnLoadDemoLidar.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>1-Click Load</span>';
+          }, 3000);
+        } catch (err) {
+          console.error('Failed to load demo lidar:', err);
+          btnLoadDemoLidar.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>1-Click Load</span>';
+        }
+      });
+    }
+
     // Branch A: Process LiDAR
     const btnRunLidar = document.getElementById('btn-run-lidar-pipeline');
     if (btnRunLidar) {
@@ -855,7 +936,9 @@ class App {
             formData.append('parcel_id', this.currentParcel.parcel_id);
           }
 
-          const resp = await safeFetch('/api/upload/lidar', {
+          formData.append('ward_id', this.currentWardId || '1');
+
+          const resp = await safeFetch(`/api/upload/lidar?ward_id=${this.currentWardId || '1'}`, {
             method: 'POST',
             body: formData
           });
@@ -866,9 +949,69 @@ class App {
               logBox.innerHTML += `> Points Processed: ${res.points_processed.toLocaleString()}\n`;
               logBox.innerHTML += `> nDSM Height Extracted: ${res.building_height_m}m (Ground MSL: ${res.ground_elevation_msl}m)\n`;
               logBox.innerHTML += `> Extracted ${res.floors_count} Facade Floor Slices with 18-char 3D ULPINs!\n`;
-              logBox.innerHTML += `> Base ULPIN: ${res.base_ulpin}\n> Status: SUCCESS - 3D Layers Ready!`;
+              logBox.innerHTML += `> Generated 3D Parcel: ${res.parcel_id}\n`;
+              logBox.innerHTML += `> Base ULPIN: ${res.base_ulpin}\n`;
+              logBox.innerHTML += `> Status: SUCCESS - 3D Volumetric Digital Twin Ready!\n`;
+              logBox.innerHTML += `<button id="btn-view-lidar-3d" class="btn btn-primary" style="margin-top: 10px; width: 100%; justify-content: center; height: 32px;"><i class="fa-solid fa-cube"></i> View 3D Digital Twin</button>`;
+              
+              const btnView3D = document.getElementById('btn-view-lidar-3d');
+              if (btnView3D) {
+                btnView3D.addEventListener('click', () => {
+                  modal.classList.remove('active');
+                });
+              }
             }
-            if (res.footprint && res.footprint.geometry) {
+
+            if (res.parcel) {
+              // 1. Add/Update in current parcels collection
+              const pFeature = {
+                type: "Feature",
+                id: res.parcel.parcel_id,
+                properties: {
+                  parcel_id: res.parcel.parcel_id,
+                  ward_id: res.parcel.ward_id,
+                  ulpin: res.parcel.ulpin,
+                  survey_number: res.parcel.survey_number,
+                  land_use: res.parcel.land_use,
+                  owner_name: res.parcel.owner_name,
+                  area_sqm: res.parcel.area_sqm,
+                  buildings_count: res.parcel.buildings_count,
+                  floors_count: res.parcel.floors_count,
+                  data_source: "Drone LiDAR Survey (nDSM)",
+                  is_persisted_to_db: true,
+                  centroid: res.parcel.centroid
+                },
+                geometry: res.parcel.geometry
+              };
+
+              const existingIdx = this.currentParcelsList.findIndex(p => p.properties && p.properties.parcel_id === res.parcel.parcel_id);
+              if (existingIdx >= 0) {
+                this.currentParcelsList[existingIdx] = pFeature;
+              } else {
+                this.currentParcelsList.unshift(pFeature);
+              }
+              this.map2d.setParcels({ type: "FeatureCollection", features: this.currentParcelsList });
+
+              // 2. Select and zoom in 2D map
+              await this.onParcelSelected(res.parcel.parcel_id);
+              this.map2d.zoomToParcel(res.parcel.parcel_id);
+
+              // 3. Immediately render in 3D Volumetric viewer
+              if (res.extrusion) {
+                this.viewer3d.setParcel3D(res.extrusion);
+              }
+
+              // 4. Update ward LiDAR status and unlock LiDAR Mode
+              this.currentWardHasLidar = true;
+              this.updateSourceSelector(true, this.currentWardName);
+              const sourceSelect = document.getElementById('source-select');
+              if (sourceSelect) {
+                sourceSelect.value = 'lidar';
+              }
+
+              // 5. Update stats
+              await this.loadStats();
+            } else if (res.footprint && res.footprint.geometry) {
               this.map2d.addCustomFootprint(res.footprint.geometry, res.base_ulpin);
             }
           }
