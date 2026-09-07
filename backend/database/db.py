@@ -442,59 +442,6 @@ class SpatialDatabase:
         if hasattr(self, "_wards_cache") and ward_key in self._wards_cache:
             return self._wards_cache[ward_key]
 
-<<<<<<< HEAD
-    def generate_ward_parcels(
-        self,
-        ward_id: str,
-        target_parcels: Optional[int] = None,
-        source: str = "synthetic"
-    ) -> List[Dict[str, Any]]:
-        """
-        Generate cadastral parcels, 3D buildings, and 3D ULPINs for a ward.
-        Supports 'synthetic' (Instant Voronoi partitioning) or 'osm' (Live Overpass API).
-        """
-        with self._lock:
-            ward = self.wards.get(str(ward_id))
-            if not ward:
-                raise ValueError(f"Ward with ID {ward_id} not found")
-
-            # Remove existing parcels for this ward
-            existing_ids = [p_id for p_id, p in self.parcels.items() if p["ward_id"] == str(ward_id)]
-            for pid in existing_ids:
-                if pid in self.parcels:
-                    ulpin = self.parcels[pid]["ulpin"]
-                    self.ulpin_index.pop(ulpin, None)
-                    self.lidar_cache.pop(pid, None)
-                    del self.parcels[pid]
-
-            ward_geom_dict = ward["geometry"]
-            sh_geom = geojson_to_shapely(ward_geom_dict)
-            
-            if isinstance(sh_geom, MultiPolygon):
-                sh_geom = max(sh_geom.geoms, key=lambda g: g.area)
-
-            if source.lower() == "osm":
-                new_parcels = generate_parcels_from_osm(
-                    ward_polygon_wgs84=sh_geom,
-                    ward_id=ward_id,
-                    max_parcels=target_parcels
-                )
-            else:
-                new_parcels = partition_ward_into_parcels(
-                    ward_polygon_wgs84=sh_geom,
-                    ward_id=ward_id,
-                    target_parcels=target_parcels
-                )
-
-            for p in new_parcels:
-                pid = p["parcel_id"]
-                ulpin = p["ulpin"]
-                self.parcels[pid] = p
-                self.ulpin_index[ulpin] = pid
-
-            ward["parcels_count"] = len(new_parcels)
-            return new_parcels
-=======
         max_retries = 2
         for attempt in range(max_retries):
             session = self.get_session()
@@ -528,7 +475,6 @@ class SpatialDatabase:
             finally:
                 session.close()
         return None
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
     def get_parcels(
         self,
@@ -539,40 +485,6 @@ class SpatialDatabase:
         source: str = "osm",
         limit: Optional[int] = 60
     ) -> List[Dict[str, Any]]:
-<<<<<<< HEAD
-        """Filter parcels by ward, land use, or search term (ULPIN, owner, survey no)."""
-        with self._lock:
-            results = list(self.parcels.values())
-            
-            if ward_id:
-                ward_str = str(ward_id)
-                results = [p for p in results if p["ward_id"] == ward_str]
-                if len(results) == 0 and ward_str in self.wards:
-                    # Auto-generate all parcels for any selected ward on-the-fly instantly
-                    try:
-                        results = self.generate_ward_parcels(ward_str, target_parcels=None, source="synthetic")
-                    except Exception as e:
-                        print(f"[Database] Auto-generation error for ward {ward_str}: {e}")
-                        results = []
-
-
-                
-            if land_use and land_use.lower() != "all":
-                results = [p for p in results if p["land_use"].lower() == land_use.lower()]
-                
-            if search:
-                term = search.strip().upper()
-                matched = []
-                for p in results:
-                    if (term in p["ulpin"].upper() or
-                        term in p["parcel_id"].upper() or
-                        term in p["owner_name"].upper() or
-                        term in p["survey_number"].upper()):
-                        matched.append(p)
-                results = matched
-                
-            return results
-=======
         """
         DB-First Parcel Retrieval:
         1. Checks in-memory cache for ultra-fast (sub-millisecond) response.
@@ -836,7 +748,6 @@ class SpatialDatabase:
 
             print(f"[Database] Generated all {len(all_parcels)} parcels for Ward {ward_id}. Persisted {len(db_parcels)} parcels and {len(floor_records)} 3D floor units into PostgreSQL.")
             return all_parcels
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
     def get_parcel(self, parcel_id: str) -> Optional[Dict[str, Any]]:
         """Get parcel by ID or 14-character ULPIN from memory cache or DB."""
@@ -969,25 +880,6 @@ class SpatialDatabase:
             total_buildings = session.query(BuildingTable).count()
             total_3d_units = session.query(FloorUnitTable).count()
 
-<<<<<<< HEAD
-            for p in self.parcels.values():
-                total_land_area += p.get("area_sqm", 0.0)
-                lu = p.get("land_use", "Residential")
-                land_use_counts[lu] = land_use_counts.get(lu, 0) + 1
-                
-                ext = p.get("extrusion") or {}
-                b_list = ext.get("buildings", [])
-                if b_list:
-                    total_buildings += len(b_list)
-                    for b in b_list:
-                        total_3d_units += len(b.get("floors", []))
-                        total_built_up_area += b.get("built_up_area_sqm", 0.0)
-                else:
-                    total_buildings += p.get("buildings_count", 1)
-                    fc = p.get("floors_count", 3)
-                    total_3d_units += (fc + 2)  # Above ground floors + underground units
-                    total_built_up_area += p.get("area_sqm", 0.0) * fc * 0.60
-=======
             total_land_area = session.query(func.sum(ParcelTable.area_sqm)).scalar() or 0.0
             total_built_up_area = session.query(func.sum(BuildingTable.built_up_area_sqm)).scalar() or 0.0
 
@@ -998,7 +890,6 @@ class SpatialDatabase:
                     land_use_counts[lu] = count
                 else:
                     land_use_counts[lu] = count
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
             return {
                 "total_states": total_states,
@@ -1018,18 +909,3 @@ class SpatialDatabase:
 
 # Global database singleton
 db_instance = SpatialDatabase()
-<<<<<<< HEAD
-
-# Seed default flagship wards on startup
-def seed_initial_wards():
-    for wid in ["1", "0", "3"]:
-        if wid in db_instance.wards:
-            try:
-                db_instance.generate_ward_parcels(wid, target_parcels=None, source="synthetic")
-                print(f"[Seed] Generated default 3D parcels for Ward ID {wid} ({db_instance.wards[wid]['name']})")
-            except Exception as e:
-                print(f"[Seed] Note on seeding ward {wid}: {e}")
-
-seed_initial_wards()
-=======
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451

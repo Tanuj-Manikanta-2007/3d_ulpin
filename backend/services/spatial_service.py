@@ -158,3 +158,69 @@ def check_building_encroachment(
         "status": "ENCROACHED" if is_encroached else "CLEAN"
     }
 
+
+def check_3d_vertical_overlap(
+    floors: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Validate that no two vertical floor slices have conflicting Z intervals or illegal intersecting volumes.
+    """
+    collisions = []
+    for i in range(len(floors)):
+        for j in range(i + 1, len(floors)):
+            f1 = floors[i]
+            f2 = floors[j]
+            z1_min = f1.get("z_min", f1.get("z_min_msl", 0.0))
+            z1_max = f1.get("z_max", f1.get("z_max_msl", 0.0))
+            z2_min = f2.get("z_min", f2.get("z_min_msl", 0.0))
+            z2_max = f2.get("z_max", f2.get("z_max_msl", 0.0))
+
+            # Check vertical interval overlap (excluding touching boundaries)
+            if max(z1_min, z2_min) < min(z1_max, z2_max) - 0.05:
+                collisions.append({
+                    "floor_a": f1.get("floor_label", f"L{i}"),
+                    "floor_b": f2.get("floor_label", f"L{j}"),
+                    "overlap_interval_m": [round(max(z1_min, z2_min), 2), round(min(z1_max, z2_max), 2)],
+                    "type": "Vertical_Strata_Collision"
+                })
+
+    has_collision = len(collisions) > 0
+    return {
+        "status": "COLLISION_DETECTED" if has_collision else "NO_VERTICAL_OVERLAP",
+        "has_collision": has_collision,
+        "collisions_count": len(collisions),
+        "collisions": collisions,
+        "message": "All floor strata are vertically isolated and compliant." if not has_collision else f"Detected {len(collisions)} overlapping floor strata."
+    }
+
+
+def validate_3d_cadastral_topology(
+    parcel_wgs84: Polygon,
+    building_wgs84: Polygon,
+    floors: List[Dict[str, Any]],
+    parcel_ulpin: str
+) -> Dict[str, Any]:
+    """
+    Complete PostGIS / Shapely 3D Cadastral Topology Validation Engine:
+    1. Horizontal 2D Encroachment against cadastral parcel boundaries.
+    2. Vertical 3D non-overlapping check across all vertical floor strata.
+    3. Clear Deed & Legal Certificate authorization.
+    """
+    encroachment = check_building_encroachment(parcel_wgs84, building_wgs84)
+    vertical = check_3d_vertical_overlap(floors)
+
+    is_compliant = (not encroachment["is_encroached"]) and (not vertical["has_collision"])
+    deed_status = "APPROVED_FOR_REGISTRATION" if is_compliant else "LEGAL_FLAG_RAISED"
+
+    return {
+        "status": "VALIDATED",
+        "is_compliant": is_compliant,
+        "deed_status": deed_status,
+        "deed_summary": "Clear Title: Building is 100% within cadastral bounds with zero vertical strata conflicts." if is_compliant else "Title Exception: Boundary encroachment or vertical strata conflict detected.",
+        "parcel_ulpin": parcel_ulpin[:14] if len(parcel_ulpin) >= 14 else parcel_ulpin,
+        "horizontal_encroachment": encroachment,
+        "vertical_topology": vertical,
+        "certified_units_count": len(floors)
+    }
+
+

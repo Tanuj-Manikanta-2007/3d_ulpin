@@ -86,7 +86,9 @@ class App {
     // 1. Initialize Controllers
     this.map2d = new Map2DController('map2d', (parcelId) => this.onParcelSelected(parcelId));
     this.viewer3d = new Viewer3DController('view3d-canvas', (floorIdx, floorData) => this.onFloorSelectedIn3D(floorIdx, floorData));
+    this.cesiumViewer = new CesiumViewerController('cesium-container', (props) => this.onFloorSelectedIn3D(props.floor_index || 0, props));
     this.ulpinTools = new ULPINToolsController();
+    this.currentTiles3D = null;
 
     // 2. Bind UI Events
     this.bindUIEvents();
@@ -151,27 +153,55 @@ class App {
       });
     }
 
-    // View Mode Toggle (3D Mesh vs LiDAR)
+    // View Mode Toggle (3D Mesh vs LiDAR vs Cesium 3D Globe)
     const btnModeMesh = document.getElementById('btn-mode-mesh');
     const btnModeLidar = document.getElementById('btn-mode-lidar');
+    const btnModeCesium = document.getElementById('btn-mode-cesium');
+    const threeCanvas = document.getElementById('view3d-canvas');
+    const threeHud = document.querySelector('.view3d-hud');
+    const cesiumCont = document.getElementById('cesium-container');
 
-    if (btnModeMesh && btnModeLidar) {
-      btnModeMesh.addEventListener('click', () => {
-        btnModeMesh.classList.add('btn-primary');
-        btnModeMesh.classList.remove('btn-secondary');
-        btnModeLidar.classList.add('btn-secondary');
-        btnModeLidar.classList.remove('btn-primary');
-        this.viewer3d.setViewMode('mesh');
+    const setViewerMode = (mode) => {
+      [btnModeMesh, btnModeLidar, btnModeCesium].forEach(b => {
+        if (b) {
+          b.classList.remove('btn-primary');
+          b.classList.add('btn-secondary');
+        }
       });
 
-      btnModeLidar.addEventListener('click', () => {
-        btnModeLidar.classList.add('btn-primary');
-        btnModeLidar.classList.remove('btn-secondary');
-        btnModeMesh.classList.add('btn-secondary');
-        btnModeMesh.classList.remove('btn-primary');
-        this.viewer3d.setViewMode('lidar');
-      });
-    }
+      if (mode === 'cesium') {
+        if (btnModeCesium) {
+          btnModeCesium.classList.add('btn-primary');
+          btnModeCesium.classList.remove('btn-secondary');
+        }
+        if (threeCanvas) threeCanvas.style.display = 'none';
+        if (threeHud) threeHud.style.display = 'none';
+        if (cesiumCont) cesiumCont.style.display = 'block';
+        this.cesiumViewer.show();
+        if (this.currentTiles3D) {
+          this.cesiumViewer.render3DBuilding(this.currentTiles3D);
+        }
+      } else {
+        if (cesiumCont) cesiumCont.style.display = 'none';
+        if (threeCanvas) threeCanvas.style.display = 'block';
+        if (threeHud) threeHud.style.display = 'flex';
+        this.cesiumViewer.hide();
+
+        if (mode === 'mesh' && btnModeMesh) {
+          btnModeMesh.classList.add('btn-primary');
+          btnModeMesh.classList.remove('btn-secondary');
+          this.viewer3d.setViewMode('mesh');
+        } else if (mode === 'lidar' && btnModeLidar) {
+          btnModeLidar.classList.add('btn-primary');
+          btnModeLidar.classList.remove('btn-secondary');
+          this.viewer3d.setViewMode('lidar');
+        }
+      }
+    };
+
+    if (btnModeMesh) btnModeMesh.addEventListener('click', () => setViewerMode('mesh'));
+    if (btnModeLidar) btnModeLidar.addEventListener('click', () => setViewerMode('lidar'));
+    if (btnModeCesium) btnModeCesium.addEventListener('click', () => setViewerMode('cesium'));
 
     // Reset 3D Camera button
     const btnResetCam = document.getElementById('btn-reset-cam');
@@ -195,6 +225,9 @@ class App {
         }
       });
     }
+
+    // Bind Ingestion Portal Modal & Topology Validation Events
+    this.bindIngestPortalEvents();
   }
 
   async loadStats() {
@@ -379,11 +412,7 @@ class App {
     btn.disabled = true;
 
     try {
-<<<<<<< HEAD
-      const resp = await fetch(`/api/wards/${this.currentWardId}/generate?source=${source}`, {
-=======
       const resp = await safeFetch(`/api/wards/${this.currentWardId}/generate?source=${source}`, {
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
         method: 'POST'
       });
 
@@ -499,6 +528,31 @@ class App {
         }
       } catch (lidarErr) {
         console.warn('Could not load LiDAR points:', lidarErr);
+      }
+
+      // 4. Fetch 3D Topology & Clear Deed validation
+      try {
+        const topResp = await safeFetch(`/api/topology/validate-3d?parcel_id=${parcelId}`, { method: 'POST' });
+        if (topResp && topResp.ok) {
+          const topData = await topResp.json();
+          this.updateTopologyDossier(topData);
+        }
+      } catch (topErr) {
+        console.warn('Could not validate 3D topology:', topErr);
+      }
+
+      // 5. Fetch 3D Tiles Layer for CesiumJS
+      try {
+        const tilesResp = await safeFetch(`/api/tiles3d/${parcelId}`);
+        if (tilesResp && tilesResp.ok) {
+          this.currentTiles3D = await tilesResp.json();
+          const cesiumCont = document.getElementById('cesium-container');
+          if (cesiumCont && cesiumCont.style.display !== 'none') {
+            this.cesiumViewer.render3DBuilding(this.currentTiles3D);
+          }
+        }
+      } catch (tErr) {
+        console.warn('Could not load 3D tiles for Cesium:', tErr);
       }
     } catch (e) {
       console.error('Error selecting parcel:', e);
@@ -631,6 +685,239 @@ class App {
 
       floorListContainer.appendChild(item);
     });
+  }
+
+  updateTopologyDossier(report) {
+    if (!report) return;
+    const badge = document.getElementById('inspector-deed-badge');
+    const encElem = document.getElementById('inspector-encroach-status');
+    const overElem = document.getElementById('inspector-overlap-status');
+    const descElem = document.getElementById('inspector-deed-summary');
+
+    const enc = report.horizontal_encroachment || {};
+    const vert = report.vertical_topology || {};
+
+    if (encElem) {
+      if (enc.is_encroached) {
+        encElem.textContent = `ENCROACHED (${enc.encroached_area_sqm} m² outside)`;
+        encElem.style.color = '#ef4444';
+      } else {
+        encElem.textContent = `CLEAN (${enc.building_area_sqm || 0} m²)`;
+        encElem.style.color = '#10b981';
+      }
+    }
+
+    if (overElem) {
+      if (vert.has_collision) {
+        overElem.textContent = `COLLISION (${vert.collisions_count} overlap)`;
+        overElem.style.color = '#ef4444';
+      } else {
+        overElem.textContent = 'NO OVERLAP';
+        overElem.style.color = '#10b981';
+      }
+    }
+
+    if (badge) {
+      if (report.is_compliant) {
+        badge.textContent = 'APPROVED DEED';
+        badge.style.background = 'rgba(16, 185, 129, 0.2)';
+        badge.style.borderColor = '#10b981';
+        badge.style.color = '#10b981';
+      } else {
+        badge.textContent = 'LEGAL FLAG';
+        badge.style.background = 'rgba(239, 68, 68, 0.2)';
+        badge.style.borderColor = '#ef4444';
+        badge.style.color = '#ef4444';
+      }
+    }
+
+    if (descElem) {
+      descElem.textContent = report.deed_summary || 'Compliance report generated.';
+    }
+  }
+
+  bindIngestPortalEvents() {
+    const modal = document.getElementById('ingest-modal');
+    const btnOpen = document.getElementById('btn-open-ingest-portal');
+    const btnClose = document.getElementById('btn-close-ingest-modal');
+    const tabLidar = document.getElementById('tab-branch-lidar');
+    const tabFloorplan = document.getElementById('tab-branch-floorplan');
+    const formLidar = document.getElementById('form-branch-lidar');
+    const formFloorplan = document.getElementById('form-branch-floorplan');
+    const logBox = document.getElementById('ingest-log-box');
+
+    if (btnOpen && modal) {
+      btnOpen.addEventListener('click', () => {
+        modal.classList.add('active');
+        if (logBox) logBox.style.display = 'none';
+      });
+    }
+
+    if (btnClose && modal) {
+      btnClose.addEventListener('click', () => {
+        modal.classList.remove('active');
+      });
+    }
+
+    if (tabLidar && tabFloorplan) {
+      tabLidar.addEventListener('click', () => {
+        tabLidar.classList.add('btn-primary');
+        tabLidar.classList.remove('btn-secondary');
+        tabFloorplan.classList.add('btn-secondary');
+        tabFloorplan.classList.remove('btn-primary');
+        if (formLidar) formLidar.style.display = 'block';
+        if (formFloorplan) formFloorplan.style.display = 'none';
+      });
+
+      tabFloorplan.addEventListener('click', () => {
+        tabFloorplan.classList.add('btn-primary');
+        tabFloorplan.classList.remove('btn-secondary');
+        tabLidar.classList.add('btn-secondary');
+        tabLidar.classList.remove('btn-primary');
+        if (formFloorplan) formFloorplan.style.display = 'block';
+        if (formLidar) formLidar.style.display = 'none';
+      });
+    }
+
+    // Baseline OpenTopography DEM Trigger
+    const btnFetchDemo = document.getElementById('btn-fetch-opentopo');
+    if (btnFetchDemo) {
+      btnFetchDemo.addEventListener('click', async () => {
+        try {
+          btnFetchDemo.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+          const resp = await safeFetch('/api/elevation/opentopography?lat=17.4400&lon=78.3800');
+          if (resp.ok) {
+            const data = await resp.json();
+            const demInput = document.getElementById('input-dem-value');
+            if (demInput) demInput.value = `${data.elevation_m_msl} m MSL (${data.source})`;
+          }
+        } catch (e) {
+          console.warn('OpenTopography fetch error:', e);
+        } finally {
+          btnFetchDemo.innerHTML = '<i class="fa-solid fa-sync"></i> Fetch DEM';
+        }
+      });
+    }
+
+    // Branch A: Process LiDAR
+    const btnRunLidar = document.getElementById('btn-run-lidar-pipeline');
+    if (btnRunLidar) {
+      btnRunLidar.addEventListener('click', async () => {
+        const fileInput = document.getElementById('input-lidar-file');
+        const origText = btnRunLidar.innerHTML;
+        btnRunLidar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing CORS-Corrected LiDAR...';
+        btnRunLidar.disabled = true;
+
+        if (logBox) {
+          logBox.style.display = 'block';
+          logBox.innerHTML = '> Initializing LiDAR processing pipeline...\n> Ingesting .laz scan in UTM Zone 44N...\n';
+        }
+
+        try {
+          const formData = new FormData();
+          if (fileInput && fileInput.files.length > 0) {
+            formData.append('file', fileInput.files[0]);
+          }
+          if (this.currentParcel) {
+            formData.append('parcel_id', this.currentParcel.parcel_id);
+          }
+
+          const resp = await safeFetch('/api/upload/lidar', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (resp.ok) {
+            const res = await resp.json();
+            if (logBox) {
+              logBox.innerHTML += `> Points Processed: ${res.points_processed.toLocaleString()}\n`;
+              logBox.innerHTML += `> nDSM Height Extracted: ${res.building_height_m}m (Ground MSL: ${res.ground_elevation_msl}m)\n`;
+              logBox.innerHTML += `> Extracted ${res.floors_count} Facade Floor Slices with 18-char 3D ULPINs!\n`;
+              logBox.innerHTML += `> Base ULPIN: ${res.base_ulpin}\n> Status: SUCCESS - 3D Layers Ready!`;
+            }
+            if (res.footprint && res.footprint.geometry) {
+              this.map2d.addCustomFootprint(res.footprint.geometry, res.base_ulpin);
+            }
+          }
+        } catch (err) {
+          if (logBox) logBox.innerHTML += `\n> Error: ${err.message || err}`;
+        } finally {
+          btnRunLidar.innerHTML = origText;
+          btnRunLidar.disabled = false;
+        }
+      });
+    }
+
+    // Branch B: Process Floor Plan Vectorizer
+    const btnRunFloorplan = document.getElementById('btn-run-floorplan-pipeline');
+    if (btnRunFloorplan) {
+      btnRunFloorplan.addEventListener('click', async () => {
+        const fileInput = document.getElementById('input-floorplan-file');
+        const floorIdx = document.getElementById('input-floor-idx')?.value || 1;
+        const totalLevels = document.getElementById('input-total-levels')?.value || 5;
+        const floorHeight = document.getElementById('input-floor-height')?.value || 3.2;
+
+        const origText = btnRunFloorplan.innerHTML;
+        btnRunFloorplan.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Vectorizing Architectural Floor Plan...';
+        btnRunFloorplan.disabled = true;
+
+        if (logBox) {
+          logBox.style.display = 'block';
+          logBox.innerHTML = '> Ingesting architectural floor plan document...\n> Performing adaptive thresholding and wall contour extraction...\n';
+        }
+
+        try {
+          const formData = new FormData();
+          if (fileInput && fileInput.files.length > 0) {
+            formData.append('file', fileInput.files[0]);
+          }
+          if (this.currentParcel) {
+            formData.append('parcel_id', this.currentParcel.parcel_id);
+          }
+
+          const resp = await safeFetch(`/api/upload/floorplan?floor_index=${floorIdx}&total_levels=${totalLevels}&floor_height_m=${floorHeight}`, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (resp.ok) {
+            const res = await resp.json();
+            const fp = res.floorplan || {};
+            if (logBox) {
+              logBox.innerHTML += `> Document: ${fp.filename} (${fp.is_pdf ? 'PDF Blueprint' : 'Raster Floorplan'})\n`;
+              logBox.innerHTML += `> Total Floor Area: ${fp.total_floor_area_sqm} m² across ${res.total_levels} levels\n`;
+              logBox.innerHTML += `> Extracted ${fp.units_count} Room/Apartment Vector Polygons with 18-char 3D ULPINs!\n`;
+              logBox.innerHTML += `> Status: SUCCESS - Vector Strata Georeferenced!`;
+            }
+          }
+        } catch (err) {
+          if (logBox) logBox.innerHTML += `\n> Error: ${err.message || err}`;
+        } finally {
+          btnRunFloorplan.innerHTML = origText;
+          btnRunFloorplan.disabled = false;
+        }
+      });
+    }
+
+    // Revalidate 3D Topology Button
+    const btnReval = document.getElementById('btn-revalidate-topology');
+    if (btnReval) {
+      btnReval.addEventListener('click', async () => {
+        if (!this.currentParcel) return;
+        btnReval.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+        try {
+          const resp = await safeFetch(`/api/topology/validate-3d?parcel_id=${this.currentParcel.parcel_id}`, { method: 'POST' });
+          if (resp.ok) {
+            const rep = await resp.json();
+            this.updateTopologyDossier(rep);
+          }
+        } catch (e) {
+          console.warn('Topology validation error:', e);
+        } finally {
+          btnReval.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Run PostGIS 3D Topology Check';
+        }
+      });
+    }
   }
 
   renderEmptyInspector(message = 'No parcels in this ward. Click "Generate 3D Parcels" above.') {

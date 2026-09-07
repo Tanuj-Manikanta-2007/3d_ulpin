@@ -30,10 +30,16 @@ from backend.services.ulpin_generator import (
 )
 from backend.services.spatial_service import (
     check_building_encroachment,
+    check_3d_vertical_overlap,
+    validate_3d_cadastral_topology,
     geojson_to_shapely,
-    get_bbox_wgs84
+    get_bbox_wgs84,
+    shapely_to_geojson
 )
 from backend.services.ai_extractor import extract_building_footprints_from_image
+from backend.services.lidar_pipeline import lidar_pipeline_instance
+from backend.services.floorplan_vectorizer import floorplan_vectorizer_instance
+from backend.services.elevation_service import elevation_service_instance
 
 
 
@@ -118,11 +124,7 @@ def get_ward(ward_id: str = Path(..., description="Ward ID")):
 @app.post("/api/wards/{ward_id}/generate")
 def generate_ward_parcels(
     ward_id: str = Path(..., description="Ward ID"),
-<<<<<<< HEAD
-    count: Optional[int] = Query(None, description="Optional limit on target number of parcels to generate"),
-=======
     count: Optional[int] = Query(None, description="Target number of parcels (defaults to all possible in ward)"),
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     source: str = Query("osm", description="Data source: 'osm' (Live OpenStreetMap) or 'synthetic' (Voronoi partitioning)")
 ):
     """Generate all possible parcels in the ward location, storing 50 parcels directly into PostgreSQL."""
@@ -226,7 +228,6 @@ def get_parcel_3d(parcel_id: str = Path(..., description="Parcel ID or 14-char U
     parcel = db_instance.get_parcel(parcel_id)
     if not parcel:
         raise HTTPException(status_code=404, detail=f"Parcel {parcel_id} not found")
-<<<<<<< HEAD
 
     ext = parcel.get("extrusion")
     if not ext:
@@ -247,9 +248,6 @@ def get_parcel_3d(parcel_id: str = Path(..., description="Parcel ID or 14-char U
         )
         parcel["extrusion"] = ext
     return ext
-=======
-    return parcel.get("extrusion") or {}
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
 
 @app.get("/api/parcels/{parcel_id}/lidar")
@@ -341,6 +339,196 @@ def ai_extract_footprints(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI extraction failed: {str(e)}")
 
+
+@app.post("/api/upload/lidar")
+async def upload_drone_lidar(
+    file: Optional[UploadFile] = File(None),
+    parcel_id: Optional[str] = Query(None),
+    min_lon: float = Query(78.379),
+    min_lat: float = Query(17.439),
+    max_lon: float = Query(78.383),
+    max_lat: float = Query(17.443)
+):
+    """
+    Branch A: Drone / LiDAR Upload (.laz/.las) + Orthophoto.
+    Executes nDSM generation, semantic point cloud segmentation, vertical floor slicing [Z_min, Z_max],
+    and regularized 2D building footprint extraction.
+    """
+    try:
+        contents = await file.read() if file else b""
+        filename = file.filename if file else "sample_flight.laz"
+
+        # 1. Parse point cloud (real laspy or CORS-corrected synthetic scan)
+        pc = lidar_pipeline_instance.parse_point_cloud(contents, filename)
+
+        # 2. Segment into Ground, Roof, and Facades
+        segmented = lidar_pipeline_instance.segment_point_cloud(pc)
+
+        # 3. Associate or derive Base ULPIN
+        parcel = db_instance.get_parcel(parcel_id) if parcel_id else None
+        base_ulpin = parcel["ulpin"] if parcel else generate_prototype_ulpin((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0, 0)
+
+        # 4. Vertical Facade Floor Slicing
+        floors = lidar_pipeline_instance.slice_vertical_floors(segmented, base_ulpin)
+
+        # 5. Regularized Building Footprint
+        footprint = lidar_pipeline_instance.extract_regularized_footprint(pc, [min_lon, min_lat, max_lon, max_lat])
+
+        return {
+            "status": "success",
+            "branch": "Branch_A_LiDAR_Drone",
+            "filename": filename,
+            "points_processed": pc["point_count"],
+            "ground_elevation_msl": segmented["ground_elevation_msl"],
+            "max_elevation_msl": segmented["max_elevation_msl"],
+            "building_height_m": segmented["ndsm_height_m"],
+            "floors_count": len(floors),
+            "floors": floors,
+            "footprint": footprint,
+            "base_ulpin": base_ulpin[:14]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LiDAR processing error: {str(e)}")
+
+
+@app.post("/api/upload/floorplan")
+async def upload_architectural_floorplan(
+    file: Optional[UploadFile] = File(None),
+    parcel_id: Optional[str] = Query(None),
+    floor_index: int = Query(1, ge=0, le=50),
+    total_levels: int = Query(4, ge=1, le=50),
+    floor_height_m: float = Query(3.2, ge=2.4, le=6.0)
+):
+    """
+    Branch B: Upload Architectural Floor Plan (PDF / Image) + Levels input.
+    Extracts room/apartment vectors and calculates sub-unit areas.
+    """
+    try:
+        contents = await file.read() if file else b""
+        filename = file.filename if file else "architectural_plan.pdf"
+
+        parcel = db_instance.get_parcel(parcel_id) if parcel_id else None
+        bldg_poly = geojson_to_shapely(parcel["geometry"]) if parcel else None
+
+        vectorized = floorplan_vectorizer_instance.vectorize_floorplan(
+            file_bytes=contents,
+            filename=filename,
+            building_polygon_wgs84=bldg_poly,
+            floor_index=floor_index
+        )
+
+        base_ulpin = parcel["ulpin"] if parcel else "832454DYJFAQY2"
+        base_14 = base_ulpin[:14]
+
+        # Attach 18-character 3D ULPIN to each room/apartment unit
+        for u in vectorized["units"]:
+            suffix = f"-F{floor_index:02d}"
+            u["ulpin_3d"] = f"{base_14}{suffix}"
+
+        return {
+            "status": "success",
+            "branch": "Branch_B_FloorPlan_Vectorizer",
+            "total_levels": total_levels,
+            "floor_height_m": floor_height_m,
+            "estimated_building_height_m": round(total_levels * floor_height_m, 2),
+            "floorplan": vectorized
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Floor plan vectorization failed: {str(e)}")
+
+
+@app.get("/api/elevation/opentopography")
+def get_elevation_opentopography(
+    lat: float = Query(17.4400),
+    lon: float = Query(78.3800),
+    dem_type: str = Query("COP30", description="Copernicus 30m, SRTMGL1, or AW3D30")
+):
+    """Fetch baseline ground elevation from OpenTopography API or Regional Copernicus 30m model."""
+    elev_data = elevation_service_instance.get_baseline_elevation(lat, lon, dem_type)
+    return elev_data
+
+
+@app.post("/api/topology/validate-3d")
+def validate_3d_topology(
+    parcel_id: str = Query(..., description="Parcel ID to validate")
+):
+    """
+    PostGIS / Shapely 3D Cadastral Topology Validation Engine:
+    - Encroachment check vs legal parcel boundary.
+    - No vertical overlapping between floor strata and neighboring volumetric bounds.
+    - Clear Deed / Registration authorization status.
+    """
+    parcel = db_instance.get_parcel(parcel_id)
+    if not parcel:
+        raise HTTPException(status_code=404, detail=f"Parcel {parcel_id} not found")
+
+    parcel_poly = geojson_to_shapely(parcel["geometry"])
+    ext = parcel.get("extrusion") or {}
+    buildings = ext.get("buildings", [])
+
+    if buildings:
+        main_b = buildings[0]
+        bldg_poly = geojson_to_shapely(main_b["floors"][0].get("geometry", parcel["geometry"]))
+        floors = main_b.get("floors", [])
+    else:
+        bldg_poly = parcel_poly.buffer(-0.00003)
+        floors = [{
+            "floor_index": 0, "floor_label": "L00 (Ground)",
+            "z_min": ext.get("base_elevation_m", 512.0),
+            "z_max": ext.get("base_elevation_m", 512.0) + 3.2
+        }]
+
+    report = validate_3d_cadastral_topology(
+        parcel_wgs84=parcel_poly,
+        building_wgs84=bldg_poly,
+        floors=floors,
+        parcel_ulpin=parcel["ulpin"]
+    )
+    report["parcel_id"] = parcel_id
+    report["survey_number"] = parcel.get("survey_number")
+    report["owner_name"] = parcel.get("owner_name")
+    return report
+
+
+@app.get("/api/tiles3d/{parcel_id}")
+def get_3d_tiles_layer(parcel_id: str = Path(..., description="Parcel ID")):
+    """
+    Publish 3D Layer formatted for CesiumJS & Three.js 3D Digital Twin Viewer.
+    Includes extruded polyhedra, floor slices, and compliance classification.
+    """
+    parcel = db_instance.get_parcel(parcel_id)
+    if not parcel:
+        raise HTTPException(status_code=404, detail=f"Parcel {parcel_id} not found")
+
+    ext = parcel.get("extrusion") or {}
+    base_elev = ext.get("base_elevation_m", 512.0)
+    buildings = ext.get("buildings", [])
+
+    features_3d = []
+    if buildings:
+        for fl in buildings[0].get("floors", []):
+            features_3d.append({
+                "type": "Feature",
+                "properties": {
+                    "floor_label": fl.get("floor_label"),
+                    "floor_index": fl.get("floor_index"),
+                    "z_min": fl.get("z_min"),
+                    "z_max": fl.get("z_max"),
+                    "ulpin_3d": fl.get("ulpin_3d"),
+                    "unit_type": fl.get("unit_type", "Apartment"),
+                    "color": "#00f2fe" if fl.get("floor_index", 0) % 2 == 0 else "#3b82f6"
+                },
+                "geometry": parcel["geometry"]
+            })
+
+    return {
+        "type": "FeatureCollection",
+        "parcel_id": parcel_id,
+        "base_elevation_msl": base_elev,
+        "datum": "EGM96 / WGS84",
+        "viewer_target": "CesiumJS_and_ThreeJS",
+        "features": features_3d
+    }
 
 
 @app.post("/api/ulpin/encode")

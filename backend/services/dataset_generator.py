@@ -63,15 +63,11 @@ def generate_parcels_from_osm(
     to store into PostgreSQL.
     """
     min_lon, min_lat, max_lon, max_lat = ward_polygon_wgs84.bounds
-<<<<<<< HEAD
-
-=======
     
     # 1. Total real building count across the entire ward bounding box
     total_osm_count = get_osm_building_count_in_bbox(min_lon, min_lat, max_lon, max_lat)
     
     # 2. Fetch real building footprints across the full bounding box
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     osm_buildings = fetch_osm_buildings_in_bbox(
         min_lon=min_lon,
         min_lat=min_lat,
@@ -85,11 +81,7 @@ def generate_parcels_from_osm(
         return partition_ward_into_parcels(
             ward_polygon_wgs84,
             ward_id,
-<<<<<<< HEAD
-            target_parcels=max_parcels
-=======
             target_parcels=max_parcels or 1500
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
         )
 
     # 3. Filter buildings that strictly intersect the ward polygon boundary
@@ -122,17 +114,11 @@ def generate_parcels_from_osm(
     parcels_data = []
     parcel_count = 0
 
-<<<<<<< HEAD
-    for b_item in osm_buildings:
+    for idx, b_item in enumerate(valid_buildings):
         if max_parcels is not None and len(parcels_data) >= max_parcels:
             break
-
-=======
-    for idx, b_item in enumerate(valid_buildings):
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
         b_poly = b_item["geometry"]
         parcel_count += 1
-<<<<<<< HEAD
 
         # Create parcel boundary by buffering building footprint in metric UTM (5m - 9m buffer)
         b_utm = to_utm(b_poly)
@@ -143,19 +129,7 @@ def generate_parcels_from_osm(
 
         centroid_lat, centroid_lon = get_centroid_wgs84(parcel_wgs84)
         area_sqm = calculate_metric_area(parcel_wgs84)
-=======
         is_persisted = (idx in persisted_indices)
-        
-        # Fast parcel boundary in WGS84 (0.00005 to 0.000085 deg ≈ 5.5m to 9.5m buffer)
-        buffer_deg = random.uniform(0.00005, 0.000085)
-        parcel_wgs84 = b_poly.buffer(buffer_deg)
-        
-        centroid = parcel_wgs84.centroid
-        centroid_lat, centroid_lon = float(centroid.y), float(centroid.x)
-        
-        b_area = b_item.get("area_sqm") or 120.0
-        area_sqm = round(b_area * 1.6, 2)
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
         # 2D Base ULPIN
         parcel_ulpin = generate_prototype_ulpin(centroid_lat, centroid_lon, floor=0)
@@ -212,39 +186,17 @@ def generate_parcels_from_osm(
             "extrusion": extrusion_data
         })
 
-<<<<<<< HEAD
-        if max_parcels is not None and len(parcels_data) >= max_parcels:
-            break
-
-    if len(parcels_data) == 0:
-        print("[Dataset Generator] 0 OSM buildings fell inside ward geometry, falling back to synthetic generator.")
-        return partition_ward_into_parcels(
-            ward_polygon_wgs84,
-            ward_id,
-            target_parcels=max_parcels
-        )
-
-=======
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     return parcels_data
 
 
 def partition_ward_into_parcels(
     ward_polygon_wgs84: Polygon,
     ward_id: Union[int, str],
-<<<<<<< HEAD
     target_parcels: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Subdivide a study ward into discrete cadastral parcels using spatial tessellation in UTM projection.
     Supports both Voronoi spatial partitioning and high-density grid tessellation for large wards.
-=======
-    target_parcels: int = 1200
-) -> List[Dict[str, Any]]:
-    """
-    Subdivide a study ward into discrete cadastral parcels using Voronoi spatial tessellation in UTM projection.
-    Generates a dense network of parcels across the ward, tagging 50 for database persistence.
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     """
     ward_utm = to_utm(ward_polygon_wgs84)
     minx, miny, maxx, maxy = ward_utm.bounds

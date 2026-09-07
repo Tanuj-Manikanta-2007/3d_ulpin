@@ -199,4 +199,22 @@ class Map2DController {
       }
     });
   }
+
+  addCustomFootprint(geometry, label) {
+    if (!geometry) return;
+    const customLayer = L.geoJSON(geometry, {
+      style: {
+        color: '#10b981',
+        weight: 3,
+        dashArray: '4, 4',
+        fillColor: '#10b981',
+        fillOpacity: 0.65
+      }
+    }).addTo(this.map);
+    customLayer.bindPopup(`<b>Extracted Footprint</b><br>${label || ''}`);
+    const b = customLayer.getBounds();
+    if (b.isValid()) {
+      this.map.fitBounds(b, { maxZoom: 19, padding: [40, 40] });
+    }
+  }
 }

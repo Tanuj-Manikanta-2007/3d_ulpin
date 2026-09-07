@@ -25,13 +25,8 @@ OVERPASS_ENDPOINTS = [
 ]
 
 
-<<<<<<< HEAD
-def query_overpass(query_str: str, timeout: float = 5.0) -> Optional[Dict[str, Any]]:
-    """Execute Overpass QL query with 5.0s timeout and automatic endpoint failover."""
-=======
 def query_overpass(query_str: str, timeout: int = 10) -> Optional[Dict[str, Any]]:
     """Execute Overpass QL query with rapid timeout and automatic fallback across endpoints."""
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
     headers = {
         "User-Agent": "3D-ULPIN-Cadastral-Engine/2.0 (Hyderabad-Digital-Twin)",
         "Accept": "application/json"
@@ -47,21 +42,15 @@ def query_overpass(query_str: str, timeout: int = 10) -> Optional[Dict[str, Any]
             )
             if resp.status_code == 200:
                 return resp.json()
-<<<<<<< HEAD
-        except Exception:
-=======
             else:
                 print(f"[OSM Overpass] Endpoint {endpoint} returned status {resp.status_code}")
         except Exception as e:
             print(f"[OSM Overpass] Endpoint {endpoint} failed or timed out: {e}")
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
             continue
     print("[OSM Overpass] All Overpass endpoints busy or rate-limited; falling back to synthetic cadastre.")
     return None
 
 
-<<<<<<< HEAD
-=======
 def get_osm_building_count_in_bbox(
     min_lon: float,
     min_lat: float,
@@ -85,7 +74,6 @@ def get_osm_building_count_in_bbox(
             return count_val
     return 0
 
->>>>>>> d674a2a5c7876f346ceac71627e5a12456fc5451
 
 def fetch_osm_buildings_in_bbox(
     min_lon: float,

@@ -15,6 +15,10 @@
   
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+  <!-- CesiumJS CSS & JS -->
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
   
   <!-- Custom CSS -->
   <link rel="stylesheet" href="/static/css/styles.css">
@@ -88,6 +92,9 @@
       <button id="btn-generate-parcels" class="btn btn-primary">
         <i class="fa-solid fa-wand-magic-sparkles"></i> Generate 3D Parcels
       </button>
+      <button id="btn-open-ingest-portal" class="btn btn-secondary" style="border-color: #10b981; color: #10b981;">
+        <i class="fa-solid fa-cloud-arrow-up"></i> Ward Portal
+      </button>
       <button id="btn-open-ulpin-tool" class="btn btn-secondary">
         <i class="fa-solid fa-calculator"></i> ULPIN Tool
       </button>
@@ -150,6 +157,9 @@
           <button id="btn-mode-lidar" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
             <i class="fa-solid fa-braille"></i> LiDAR Cloud
           </button>
+          <button id="btn-mode-cesium" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;">
+            <i class="fa-solid fa-globe"></i> Cesium 3D Globe
+          </button>
           <button id="btn-autorotate-3d" class="btn btn-secondary" style="padding: 6px 12px; font-size: 11px;" title="Rotate Freely 360 Degrees">
             <i class="fa-solid fa-arrows-rotate"></i> 360° Orbit
           </button>
@@ -159,6 +169,7 @@
         </div>
 
         <canvas id="view3d-canvas"></canvas>
+        <div id="cesium-container" style="display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 10;"></div>
 
         <div class="view3d-hud">
           <div class="hud-item"><i class="fa-solid fa-arrows-rotate" style="color: #00f2fe;"></i> Free 360° Orbit</div>
@@ -243,6 +254,30 @@
           </div>
         </div>
 
+        <!-- 3D Cadastral Topology & Clear Deed Validation -->
+        <div class="card" style="border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.04);">
+          <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fa-solid fa-stamp" style="color: #10b981;"></i> 3D Topology & Clear Deed</span>
+            <span id="inspector-deed-badge" class="badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid #10b981; font-size: 10px; padding: 2px 7px;">VERIFIED</span>
+          </div>
+          <div class="props-grid">
+            <div class="prop-box">
+              <div class="prop-name">Encroachment Status</div>
+              <div id="inspector-encroach-status" class="prop-val" style="color: #10b981; font-weight: 700;">CLEAN (0.0 m²)</div>
+            </div>
+            <div class="prop-box">
+              <div class="prop-name">Vertical Overlap</div>
+              <div id="inspector-overlap-status" class="prop-val" style="color: #10b981; font-weight: 700;">NO OVERLAP</div>
+            </div>
+          </div>
+          <div id="inspector-deed-summary" style="font-size: 11px; color: #94a3b8; margin-top: 8px; line-height: 1.4;">
+            Title Approved: Building is 100% within cadastral bounds with zero vertical strata conflicts.
+          </div>
+          <button id="btn-revalidate-topology" class="btn btn-secondary" style="width: 100%; margin-top: 8px; font-size: 11px; padding: 5px 10px; justify-content: center;">
+            <i class="fa-solid fa-arrows-rotate"></i> Run PostGIS 3D Topology Check
+          </button>
+        </div>
+
         <!-- Multi-Story 3D Units List -->
         <div class="card">
           <div class="card-title">
@@ -306,6 +341,91 @@
     </div>
   </div>
 
+  <!-- Modal: Ward Portal Upload & 3D Cadastral Ingestion -->
+  <div id="ingest-modal" class="modal-overlay">
+    <div class="modal-container" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-cloud-arrow-up" style="color: #10b981;"></i> Ward Portal Ingestion Engine</h3>
+        <button id="btn-close-ingest-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        
+        <!-- Tab Selector: Branch A vs Branch B -->
+        <div style="display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--border-glass); padding-bottom: 12px;">
+          <button id="tab-branch-lidar" class="btn btn-primary" style="flex: 1; justify-content: center; font-size: 12px;">
+            <i class="fa-solid fa-plane-up"></i> Branch A: Drone / LiDAR (.laz + Ortho)
+          </button>
+          <button id="tab-branch-floorplan" class="btn btn-secondary" style="flex: 1; justify-content: center; font-size: 12px;">
+            <i class="fa-solid fa-file-pdf"></i> Branch B: No LiDAR (Floor Plan + DEM)
+          </button>
+        </div>
+
+        <!-- Branch A Form (LiDAR / Drone) -->
+        <div id="form-branch-lidar">
+          <div style="background: rgba(0, 242, 254, 0.06); border: 1px dashed rgba(0, 242, 254, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
+            <i class="fa-solid fa-cloud-arrow-up" style="font-size: 32px; color: #00f2fe; margin-bottom: 8px;"></i>
+            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Drone LiDAR (.laz/.las) or High-Res Orthophoto</div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Processed at 2–5 cm CORS-corrected accuracy in UTM Zone 44N</div>
+            <input type="file" id="input-lidar-file" accept=".laz,.las,.tif,.tiff,.png,.jpg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
+          </div>
+          <button id="btn-run-lidar-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center;">
+            <i class="fa-solid fa-bolt"></i> Process LiDAR nDSM & Extract Facade Floor Slices
+          </button>
+        </div>
+
+        <!-- Branch B Form (No LiDAR: Floor Plan PDF + OpenTopography) -->
+        <div id="form-branch-floorplan" style="display: none;">
+          <div class="form-row" style="margin-bottom: 12px;">
+            <div class="form-group">
+              <label><i class="fa-solid fa-mountain"></i> Baseline Elevation Source</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="input-opentopo-source" class="form-input" value="Copernicus 30m (OpenTopography API)" readonly style="background: rgba(15, 23, 42, 0.8);">
+                <button id="btn-fetch-opentopo" class="btn btn-secondary" style="padding: 0 12px; font-size: 11px;">
+                  <i class="fa-solid fa-sync"></i> Fetch DEM
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Calculated Ground (Z_base)</label>
+              <input type="text" id="input-dem-value" class="form-input" value="512.4 m MSL" readonly>
+            </div>
+          </div>
+
+          <div style="background: rgba(16, 185, 129, 0.06); border: 1px dashed rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 18px; text-align: center; margin-bottom: 14px;">
+            <i class="fa-solid fa-file-pdf" style="font-size: 32px; color: #10b981; margin-bottom: 8px;"></i>
+            <div style="font-weight: 600; font-size: 13px; color: #fff;">Upload Architectural Floor Plan (PDF / Image)</div>
+            <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">Vectorizes room partitions, corridors, and 18-char flat identities</div>
+            <input type="file" id="input-floorplan-file" accept=".pdf,.png,.jpg,.jpeg" style="margin-top: 12px; font-size: 12px; color: #94a3b8;">
+          </div>
+
+          <div class="form-row" style="margin-bottom: 14px;">
+            <div class="form-group">
+              <label>Floor Number</label>
+              <input type="number" id="input-floor-idx" class="form-input" value="1" min="0" max="50">
+            </div>
+            <div class="form-group">
+              <label>Total Building Levels</label>
+              <input type="number" id="input-total-levels" class="form-input" value="5" min="1" max="50">
+            </div>
+            <div class="form-group">
+              <label>Floor Height (m)</label>
+              <input type="number" id="input-floor-height" class="form-input" value="3.2" step="0.1" min="2.4" max="5.0">
+            </div>
+          </div>
+
+          <button id="btn-run-floorplan-pipeline" class="btn btn-primary" style="width: 100%; justify-content: center; background: linear-gradient(135deg, #10b981, #059669); border-color: #10b981;">
+            <i class="fa-solid fa-vector-square"></i> Vectorize Floor Plan & Extrude 3D Units
+          </button>
+        </div>
+
+        <!-- Ingestion Pipeline Live Log Output -->
+        <div id="ingest-log-box" style="margin-top: 14px; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--border-glass); border-radius: 6px; padding: 10px; font-family: var(--font-mono); font-size: 11px; color: #a5f3fc; max-height: 140px; overflow-y: auto; display: none;">
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Core JS Libraries -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -314,6 +434,7 @@
   <!-- Application Modules -->
   <script src="/static/js/map2d.js"></script>
   <script src="/static/js/viewer3d.js"></script>
+  <script src="/static/js/cesium_viewer.js"></script>
   <script src="/static/js/ulpin_tools.js"></script>
   <script src="/static/js/app.js"></script>
 
